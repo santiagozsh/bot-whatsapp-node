@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import * as fs from 'fs';
 import * as dotenv from 'dotenv';
+import { construirPromptContable } from '../utils/prompts';
 
 // 1. Cargamos las variables de entorno (.env)
 dotenv.config();
@@ -9,17 +10,17 @@ dotenv.config();
 // 2. Inicializamos el cliente de Gemini con nuestra llave
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY as string);
 
-// 3. Función auxiliar para convertir la imagen a un formato que la IA entienda
-function prepararImagen(rutaArchivo: string, mimeType: string) {
+// Ahora preparamos la imagen directamente desde la memoria (Base64)
+function prepareImage(base64: string, mimeType: string) {
     return {
         inlineData: {
-            data: Buffer.from(fs.readFileSync(rutaArchivo)).toString("base64"),
+            data: base64,
             mimeType
         },
     };
 }
 
-export const extraerDatosConIA = async () => {
+export const extraerDatosConIA = async (imagenBase64: string, mimeType: string, contextoTexto: string) => {
     try {
         console.log('🤖 Enviando imagen a Gemini...');
 
@@ -33,28 +34,18 @@ export const extraerDatosConIA = async () => {
             }
         });
 
-        // 4. Preparamos el Prompt Maestro y la Imagen
-        // (Asegúrate de que el nombre del archivo aquí coincida con la imagen que pusiste)
-        const imagen = prepararImagen("prueba.png", "image/png"); 
-        
-        const prompt = `
-            Eres un experto analista contable. Extrae los datos de esta captura de pantalla de transferencia bancaria.
-            Devuelve un objeto JSON con exactamente esta estructura y llaves:
-            {
-                "fecha": "DD/MM/YYYY",
-                "precioCompra": "Solo el número sin puntos ni comas",
-                "medioDePago": "ej. Nequi, Bancolombia, Daviplata",
-                "referenciaDePago": "El número de referencia o comprobante. Si no hay, pon N/A",
-                "cuentaDestino": "El número de teléfono o cuenta al que ingresó el dinero"
-            }
-        `;
+        const imageReady  = prepareImage(imagenBase64, mimeType);
 
+        // Llamamos a la función que nos trae el texto gigante
+        const prompt = construirPromptContable(contextoTexto);
+        
         // 5. Disparamos la petición a los servidores de Google
-        const resultado = await model.generateContent([prompt, imagen]);
+        const resultado = await model.generateContent([prompt, imageReady]);
         const respuestaJson = resultado.response.text();
 
         console.log('\n✅ ¡Extracción exitosa! Este es el JSON:');
         console.log(respuestaJson);
+        return JSON.parse(respuestaJson);
 
     } catch (error) {
         console.error('❌ Error al procesar con IA:', error);
@@ -62,8 +53,24 @@ export const extraerDatosConIA = async () => {
 };
 
 // ==========================================
-// MODO DE PRUEBA: Ejecutar esto solo si corremos este archivo directamente
+// MODO DE PRUEBA:
 // ==========================================
-if (require.main === module) {
-    extraerDatosConIA();
-}
+// if (require.main === module) {
+//     const probarMegaprompt = async () => {
+//         try {
+//             const base64Prueba = Buffer.from(fs.readFileSync("prueba.png")).toString("base64");
+            
+//             const textosSimulados = `
+//                 [10:05 AM] Karol: Chicos, aquí mando el pago del cliente de Bogotá.
+//                 [10:06 AM] Karol: Son 4 relojes en total, 2 Rolex y 2 Cartier.
+//             `;
+
+//             const resultado = await extraerDatosConIA(base64Prueba, "image/png", textosSimulados);
+//             console.log('\n✅ Prueba del Megaprompt exitosa. Resultado:');
+//             console.log(resultado);
+//         } catch (e) {
+//             console.log("No se pudo hacer la prueba aislada. Falta prueba.png");
+//         }
+//     };
+//     probarMegaprompt();
+// }
