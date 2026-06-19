@@ -53,3 +53,7 @@ coverage/
 # OS Files
 .DS_Store
 Thumbs.db
+
+# Whataspp dirs
+.wwebjs_auth/
+.wwebjs_cache/
