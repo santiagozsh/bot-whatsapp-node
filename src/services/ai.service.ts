@@ -41,6 +41,11 @@ export const extraerDatosConIA = async (imagenBase64: string, mimeType: string, 
         
         // 5. Disparamos la petición a los servidores de Google
         const resultado = await model.generateContent([prompt, imageReady]);
+
+        // ¡Aquí vemos la factura en tiempo real!
+        const uso = resultado.response.usageMetadata;
+        console.log(`📊 [FINANZAS] Tokens consumidos en esta imagen: ${uso?.totalTokenCount} (Entrada: ${uso?.promptTokenCount} | Salida: ${uso?.candidatesTokenCount})`);
+        
         const respuestaJson = resultado.response.text();
 
         console.log('\n✅ ¡Extracción exitosa! Este es el JSON:');

@@ -5,7 +5,20 @@ import { procesarMensajeEntrante } from '../controllers/message.controller';
 export const initializeWhatsApp = () => {
     // 1. Configuramos el cliente con persistencia de sesión
     const client = new Client({
-        authStrategy: new LocalAuth() 
+        authStrategy: new LocalAuth(), 
+        puppeteer: {
+            headless: true,
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-accelerated-2d-canvas',
+                '--no-first-run',
+                '--no-zygote',
+                '--disable-gpu',
+                '--single-process' // Obliga a Chrome a usar un solo hilo de memoria
+            ]
+        }
     });
 
     // 2. Evento: Cuando WhatsApp pide escanear el código
@@ -26,7 +39,7 @@ export const initializeWhatsApp = () => {
 
             // 1. Lista Blanca (Whitelist) de grupos autorizados
             const gruposAutorizados = [
-                'Contabilidad Empresa Luxury Gotti', // El de producción
+                'Contabilidad| Empresa Luxury Gotti', // El de producción
                 'Contabilidad'                        // El de tu Sandbox
             ];
 

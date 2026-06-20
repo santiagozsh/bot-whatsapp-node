@@ -39,8 +39,17 @@ export const procesarMensajeEntrante = async (msg: Message) => {
 
     // 🚂 CLASIFICACIÓN INTELIGENTE (El Vagón de Tren)
     if (msg.hasMedia) {
+
+        // EL PORTERO: Si es un sticker, audio, video, o documento raro, lo pateamos inmediatamente.
+        if (msg.type === 'sticker' || msg.type === 'video' || msg.type === 'audio' || msg.type === 'ptt') {
+            console.log(`🚮 [DESCARTADO] Mensaje tipo '${msg.type}' ignorado. No gastaremos tokens ni RAM en esto.`);
+            return; // Terminamos la ejecución aquí mismo
+        }
+
         const media = await msg.downloadMedia();
-        if (media && media.mimetype.includes('image')) {
+
+        // Verificamos explícitamente que sea una imagen estándar (jpeg, png) y NO un formato webp (usado en stickers)
+        if (media && media.mimetype.includes('image') && !media.mimetype.includes('webp')) {
             console.log(`🖼️ [IMAGEN] Añadida a la mochila (Nº ${cajaActual.imagenes.length + 1}).`);
             
             // Creamos la imagen heredando cualquier texto que estuviera en la sala de espera
@@ -55,22 +64,33 @@ export const procesarMensajeEntrante = async (msg: Message) => {
             cajaActual.textosPrevios = []; 
         }
     } else if (msg.body) {
-        // Si entra un texto, evaluamos dónde ponerlo
-        // Si entra un texto, evaluamos dónde ponerlo
-        if (cajaActual.imagenes.length > 0) {
-            // Ya hay fotos: Se lo pegamos a la ÚLTIMA foto que haya entrado
-            const ultimaImagen = cajaActual.imagenes[cajaActual.imagenes.length - 1];
+
+        // 1. INTENTO A: ¿El usuario usó la función de "Responder" (Reply)?
+        if (msg.hasQuotedMsg) {
+            const mensajeCitado = await msg.getQuotedMessage();
+            const imagenAsociada = cajaActual.imagenes.find(img => img.id === mensajeCitado.id._serialized);
             
-            // Verificamos explícitamente que no sea 'undefined' para calmar a TypeScript
+            if (imagenAsociada) {
+                imagenAsociada.textosEspecificos.push(msg.body);
+                console.log(`🔗 [REPLY] Texto pegado exactamente a la imagen citada.`);
+                return; // Terminamos aquí
+            }
+        }
+
+        // 2. INTENTO B: Si no usó Reply, usamos el "Vagón de Tren" (LIFO)
+        if (cajaActual.imagenes.length > 0) {
+            const ultimaImagen = cajaActual.imagenes[cajaActual.imagenes.length - 1];
             if (ultimaImagen) {
                 ultimaImagen.textosEspecificos.push(msg.body);
-                console.log(`🔗 [TEXTO] Pegado a la Imagen Nº ${cajaActual.imagenes.length}: "${msg.body.substring(0, 30)}..."`);
+                console.log(`🔗 [VAGÓN] Texto pegado a la última Imagen: "${msg.body.substring(0, 20)}..."`);
             }
         } else {
             // Aún no hay fotos: Va para la sala de espera
             cajaActual.textosPrevios.push(msg.body);
-            console.log(`⏳ [TEXTO PREVIO] En sala de espera: "${msg.body.substring(0, 30)}..."`);
+            console.log(`⏳ [SALA ESPERA] Texto guardado: "${msg.body.substring(0, 20)}..."`);
         }
+
+        
     }
 };
 
@@ -88,7 +108,7 @@ const iniciarCronometro = (chatId: string, chatName: string) => {
         for (const [index, img] of cajaCerrada.imagenes.entries()) {
             console.log(`\n🤖 --- Enviando imagen ${index + 1} de ${cajaCerrada.imagenes.length} a Gemini ---`);
             
-            // Solo le enviamos a la IA los textos que le corresponden a ESTA imagen
+            // Armamos el contexto de texto
             let contextoFinal = "";
             if (img.textosEspecificos.length > 0) {
                 contextoFinal = `[--- IMPORTANTE: MENSAJE DIRECTO PARA ESTA IMAGEN ---]\n`;
@@ -97,21 +117,31 @@ const iniciarCronometro = (chatId: string, chatName: string) => {
                 contextoFinal = "No hay contexto de texto para esta imagen.";
             }
 
+            // Llamada a la IA
             const datosExtraidos = await extraerDatosConIA(
                 img.base64, 
                 img.mimeType, 
                 contextoFinal
             );
 
+            // Escritura en Excel
             if (datosExtraidos && datosExtraidos.esComprobanteValido) {
                 console.log(`📝 Escribiendo comprobante ${index + 1} en Excel...`);
                 await escribirFilaEnExcel(datosExtraidos);
             } else {
                 console.log(`🗑️ [DESCARTADO] La imagen ${index + 1} no es un comprobante válido.`);
             }
+
+            // 🛡️ ESCUDO ANTI-BANEOS (Rate Limiting)
+            // Evaluamos si NO es la última imagen de la mochila. 
+            // Si faltan imágenes por procesar, dormimos el código 4 segundos.
+            if (index < cajaCerrada.imagenes.length - 1) {
+                console.log('⏳ [ESCUDO ACTIVADO] Esperando 4 segundos para no saturar la API de Google...');
+                await new Promise(resolve => setTimeout(resolve, 4000));
+            }
         }
 
-        console.log('\n🎉 ¡FLUJO TERMINADO!');
+        console.log('\n🎉 ¡FLUJO MÚLTIPLE TERMINADO CON ÉXITO!');
 
     }, TIEMPO_ESPERA);
 };
