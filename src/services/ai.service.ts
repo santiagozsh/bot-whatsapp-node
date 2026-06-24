@@ -1,54 +1,79 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import * as fs from 'fs';
+import OpenAI from 'openai';
 import * as dotenv from 'dotenv';
+import sharp from 'sharp';
 import { construirPromptContable } from '../utils/prompts';
+import { extraerTextoConVision } from './vision.service';
+import { ejecutarConRetry } from '../utils/helpers';
 
-// 1. Cargamos las variables de entorno (.env)
 dotenv.config();
 
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+});
 
-// 2. Inicializamos el cliente de Gemini con nuestra llave
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY as string);
+/**
+ * Comprime la imagen antes de enviarla a Tesseract OCR (local).
+ * Beneficios: menos píxeles = OCR más rápido, menor uso de RAM,
+ * y normaliza el formato a JPEG para mejor compatibilidad con Tesseract.
+ */
+async function optimizarImagenParaOCR(base64String: string): Promise<string> {
+    try {
+        console.log('🗜️ [SHARP] Comprimiendo imagen para OCR...');
+        const bufferOriginal = Buffer.from(base64String, 'base64');
 
-// Ahora preparamos la imagen directamente desde la memoria (Base64)
-function prepareImage(base64: string, mimeType: string) {
-    return {
-        inlineData: {
-            data: base64,
-            mimeType
-        },
-    };
+        // 1200px de ancho es suficiente para que Vision lea texto pequeño.
+        // No recortamos (fit: 'inside') para no perder partes del comprobante.
+        const bufferOptimizado = await sharp(bufferOriginal)
+            .resize({ width: 1200, withoutEnlargement: true, fit: 'inside' })
+            .jpeg({ quality: 85 })
+            .toBuffer();
+
+        console.log('✅ [SHARP] Imagen lista para OCR.');
+        return bufferOptimizado.toString('base64');
+    } catch (error) {
+        console.error('❌ [SHARP] Error comprimiendo. Usando imagen original:', error);
+        return base64String;
+    }
 }
 
 export const extraerDatosConIA = async (imagenBase64: string, mimeType: string, contextoTexto: string) => {
     try {
-        console.log('🤖 Enviando imagen a Gemini...');
+        const openaiModel = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 
-        // Leemos el modelo del .env, y si por algún motivo no existe, usamos uno por defecto
-        const geminiModel = process.env.GEMINI_MODEL || "gemini-3.5-flash";
-        
-        const model = genAI.getGenerativeModel({ 
-            model: geminiModel,
-            generationConfig: {
-                responseMimeType: "application/json", // ¡Forzamos a que solo devuelva JSON!
-            }
-        });
+        // PASO 1: Comprimir imagen (para Tesseract OCR local)
+        const imagenOptimizadaBase64 = await optimizarImagenParaOCR(imagenBase64);
 
-        const imageReady  = prepareImage(imagenBase64, mimeType);
+        // PASO 2: Extraer TEXTO con Tesseract OCR local (sin gastar tokens de OpenAI)
+        const textoOCR = await extraerTextoConVision(imagenOptimizadaBase64);
 
-        // Llamamos a la función que nos trae el texto gigante
-        const prompt = construirPromptContable(contextoTexto);
-        
-        // 5. Disparamos la petición a los servidores de Google
-        const resultado = await model.generateContent([prompt, imageReady]);
+        // 🔍 DEBUG: Muestra el texto que Vision extrajo
+        // console.log('━━━━━━ [VISION OCR - TEXTO EXTRAÍDO] ━━━━━━');
+        // console.log(textoOCR);
+        // console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
-        // ¡Aquí vemos la factura en tiempo real!
-        const uso = resultado.response.usageMetadata;
-        console.log(`📊 [FINANZAS] Tokens consumidos en esta imagen: ${uso?.totalTokenCount} (Entrada: ${uso?.promptTokenCount} | Salida: ${uso?.candidatesTokenCount})`);
-        
-        const respuestaJson = resultado.response.text();
+        // PASO 3: Construir prompt con el texto extraído + contexto de WhatsApp
+        const prompt = construirPromptContable(contextoTexto, textoOCR);
 
-        console.log('\n✅ ¡Extracción exitosa! Este es el JSON:');
+        console.log('🤖 Enviando texto a OpenAI (sin imagen)...');
+
+        // PASO 4: OpenAI recibe SOLO TEXTO → tokens mínimos garantizados
+        // ejecutarConRetry reintenta automáticamente si OpenAI devuelve 429 o 500+
+        const resultado = await ejecutarConRetry(() => openai.chat.completions.create({
+            model: openaiModel,
+            messages: [
+                {
+                    role: 'user',
+                    content: prompt,
+                },
+            ],
+            response_format: { type: 'json_object' },
+        }));
+
+        const uso = resultado.usage;
+        console.log(`📊 [FINANZAS] Tokens: ${uso?.total_tokens} (Entrada: ${uso?.prompt_tokens} | Salida: ${uso?.completion_tokens})`);
+
+        const respuestaJson = resultado.choices[0]?.message?.content || '{}';
+        console.log('\n✅ ¡Extracción exitosa! JSON:');
         console.log(respuestaJson);
         return JSON.parse(respuestaJson);
 
@@ -56,26 +81,3 @@ export const extraerDatosConIA = async (imagenBase64: string, mimeType: string, 
         console.error('❌ Error al procesar con IA:', error);
     }
 };
-
-// ==========================================
-// MODO DE PRUEBA:
-// ==========================================
-// if (require.main === module) {
-//     const probarMegaprompt = async () => {
-//         try {
-//             const base64Prueba = Buffer.from(fs.readFileSync("prueba.png")).toString("base64");
-            
-//             const textosSimulados = `
-//                 [10:05 AM] Karol: Chicos, aquí mando el pago del cliente de Bogotá.
-//                 [10:06 AM] Karol: Son 4 relojes en total, 2 Rolex y 2 Cartier.
-//             `;
-
-//             const resultado = await extraerDatosConIA(base64Prueba, "image/png", textosSimulados);
-//             console.log('\n✅ Prueba del Megaprompt exitosa. Resultado:');
-//             console.log(resultado);
-//         } catch (e) {
-//             console.log("No se pudo hacer la prueba aislada. Falta prueba.png");
-//         }
-//     };
-//     probarMegaprompt();
-// }

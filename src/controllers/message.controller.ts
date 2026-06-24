@@ -106,7 +106,7 @@ const iniciarCronometro = (chatId: string, chatName: string) => {
         console.log(`⚙️ ¡Se encontraron ${cajaCerrada.imagenes.length} imagen(es)! Procesando...`);
 
         for (const [index, img] of cajaCerrada.imagenes.entries()) {
-            console.log(`\n🤖 --- Enviando imagen ${index + 1} de ${cajaCerrada.imagenes.length} a Gemini ---`);
+            console.log(`\n🤖 --- Enviando imagen ${index + 1} de ${cajaCerrada.imagenes.length} a OpenAI ---`);
             
             // Armamos el contexto de texto
             let contextoFinal = "";
@@ -132,13 +132,6 @@ const iniciarCronometro = (chatId: string, chatName: string) => {
                 console.log(`🗑️ [DESCARTADO] La imagen ${index + 1} no es un comprobante válido.`);
             }
 
-            // 🛡️ ESCUDO ANTI-BANEOS (Rate Limiting)
-            // Evaluamos si NO es la última imagen de la mochila. 
-            // Si faltan imágenes por procesar, dormimos el código 4 segundos.
-            if (index < cajaCerrada.imagenes.length - 1) {
-                console.log('⏳ [ESCUDO ACTIVADO] Esperando 4 segundos para no saturar la API de Google...');
-                await new Promise(resolve => setTimeout(resolve, 4000));
-            }
         }
 
         console.log('\n🎉 ¡FLUJO MÚLTIPLE TERMINADO CON ÉXITO!');

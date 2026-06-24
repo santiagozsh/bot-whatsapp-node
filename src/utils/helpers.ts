@@ -33,3 +33,40 @@ export const formatearCuenta = (cuentaOriginal: string): string => {
     }
     return cuentaOriginal; 
 };
+
+// 4. Retry con backoff exponencial para llamadas a APIs externas
+/**
+ * Ejecuta una función async con reintentos y backoff exponencial.
+ * Solo reintenta en errores de rate limit (429) o errores de servidor (500+).
+ * 
+ * Ejemplo de tiempos con config por defecto (maxIntentos=4):
+ *   Intento 1: inmediato
+ *   Intento 2: espera 1 segundo
+ *   Intento 3: espera 2 segundos
+ *   Intento 4: espera 4 segundos
+ *   Total máximo de espera: 7 segundos (solo si TODOS fallan)
+ */
+export const ejecutarConRetry = async <T>(
+    fn: () => Promise<T>,
+    maxIntentos: number = 4,
+    delayBaseMs: number = 1000
+): Promise<T> => {
+    for (let intento = 0; intento < maxIntentos; intento++) {
+        try {
+            return await fn();
+        } catch (error: any) {
+            const esUltimoIntento = intento === maxIntentos - 1;
+            const statusCode = error?.status || error?.response?.status;
+            const esReintentable = statusCode === 429 || (statusCode && statusCode >= 500);
+
+            if (!esReintentable || esUltimoIntento) {
+                throw error; // Error no reintentable o ya no hay intentos
+            }
+
+            const espera = delayBaseMs * Math.pow(2, intento); // 1s, 2s, 4s...
+            console.log(`⏳ [RETRY] Intento ${intento + 1}/${maxIntentos} falló (${statusCode}). Reintentando en ${espera / 1000}s...`);
+            await new Promise(resolve => setTimeout(resolve, espera));
+        }
+    }
+    throw new Error('ejecutarConRetry: se agotaron los intentos');
+};

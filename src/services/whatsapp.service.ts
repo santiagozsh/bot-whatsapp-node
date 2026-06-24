@@ -15,8 +15,7 @@ export const initializeWhatsApp = () => {
                 '--disable-accelerated-2d-canvas',
                 '--no-first-run',
                 '--no-zygote',
-                '--disable-gpu',
-                '--single-process' // Obliga a Chrome a usar un solo hilo de memoria
+                '--disable-gpu'
             ]
         }
     });

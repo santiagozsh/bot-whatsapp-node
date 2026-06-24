@@ -60,3 +60,8 @@ Thumbs.db
 
 # Google Sheets API
 google-keys.json
+.agents/
+problemas.md
+prueba.png
+spa.traineddata
+eng.traineddata
