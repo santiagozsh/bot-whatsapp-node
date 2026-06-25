@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import * as dotenv from 'dotenv';
 import sharp from 'sharp';
-import { construirPromptContable } from '../utils/prompts';
+import { construirPromptContable, construirPromptCliente } from '../utils/prompts';
 import { extraerTextoConVision } from './vision.service';
 import { ejecutarConRetry } from '../utils/helpers';
 
@@ -79,5 +79,37 @@ export const extraerDatosConIA = async (imagenBase64: string, mimeType: string, 
 
     } catch (error) {
         console.error('❌ Error al procesar con IA:', error);
+    }
+};
+
+export const extraerDatosCliente = async (bloqueTexto: string) => {
+    try {
+        const openaiModel = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+
+        const prompt = construirPromptCliente(bloqueTexto);
+
+        console.log('🤖 Enviando datos del cliente a OpenAI...');
+
+        const resultado = await ejecutarConRetry(() => openai.chat.completions.create({
+            model: openaiModel,
+            messages: [
+                {
+                    role: 'user',
+                    content: prompt,
+                },
+            ],
+            response_format: { type: 'json_object' },
+        }));
+
+        const uso = resultado.usage;
+        console.log(`📊 [CLIENTE] Tokens: ${uso?.total_tokens} (Entrada: ${uso?.prompt_tokens} | Salida: ${uso?.completion_tokens})`);
+
+        const respuestaJson = resultado.choices[0]?.message?.content || '{}';
+        console.log('\n✅ ¡Extracción de cliente exitosa! JSON:');
+        console.log(respuestaJson);
+        return JSON.parse(respuestaJson);
+
+    } catch (error) {
+        console.error('❌ Error al procesar datos del cliente con IA:', error);
     }
 };

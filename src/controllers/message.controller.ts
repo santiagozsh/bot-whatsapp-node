@@ -6,17 +6,19 @@ interface ImagenCaja {
     id: string;
     base64: string;
     mimeType: string;
-    textosEspecificos: string[];
+    textosEspecificos: string[];   // textos asociados por Reply o LIFO
+    imagenesCliente: string[];     // imágenes adicionales (datos de cliente por OCR)
 }
 
 interface CajaRecoleccion {
     imagenes: ImagenCaja[];
-    textosPrevios: string[]; // 🚂 Textos que llegan antes de cualquier imagen
+    textosPrevios: string[];       // 🚂 Textos que llegan antes de cualquier imagen
+    imagenesPrevias: string[];     // imágenes de cliente que llegan antes del primer comprobante
     cronometro: NodeJS.Timeout;
 }
 
 const cajasDeRecoleccion = new Map<string, CajaRecoleccion>();
-const TIEMPO_ESPERA = 15000; 
+const TIEMPO_ESPERA = parseInt(process.env.TIEMPO_ESPERA_CAJA || '300000');
 
 export const procesarMensajeEntrante = async (msg: Message) => {
     const chat = await msg.getChat();
@@ -26,7 +28,8 @@ export const procesarMensajeEntrante = async (msg: Message) => {
         console.log(`\n📦 [NUEVO FLUJO] Abriendo caja de recolección para: ${chat.name}`);
         cajasDeRecoleccion.set(chatId, {
             imagenes: [],
-            textosPrevios: [], // Iniciamos la sala de espera vacía
+            textosPrevios: [],    // sala de espera: textos antes de cualquier imagen
+            imagenesPrevias: [],  // sala de espera: imágenes antes del primer comprobante
             cronometro: iniciarCronometro(chatId, chat.name)
         });
     } else {
@@ -57,7 +60,8 @@ export const procesarMensajeEntrante = async (msg: Message) => {
                 id: msg.id._serialized,
                 base64: media.data,
                 mimeType: media.mimetype,
-                textosEspecificos: [...cajaActual.textosPrevios] 
+                textosEspecificos: [...cajaActual.textosPrevios],
+                imagenesCliente: []
             });
 
             // Vaciamos la sala de espera porque los textos ya se le asignaron a esta imagen

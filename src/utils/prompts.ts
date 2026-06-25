@@ -23,3 +23,25 @@ PASO 2 - EXTRACCIÓN (solo si es comprobante válido):
 Responde ÚNICAMENTE con este JSON exacto:
 {"esComprobanteValido":true,"fecha":"DD/MM/YYYY","tipo":"Ingreso","descripcion":"Pedido al por menor","precioCompra":"165000","medioDePago":"Nequi","referenciaDePago":"M11650120","cuentaDestino":"3143527475","vendedor":"JHON"}`;
 };
+
+export const construirPromptCliente = (bloqueTexto: string): string => {
+return `Eres un asistente de ventas. Extrae los datos del cliente a partir del siguiente texto.
+
+TEXTO ACUMULADO:
+\${bloqueTexto}
+
+REGLAS:
+- Extrae únicamente lo que esté explícito en el texto. NO inventes ni supongas datos.
+- Campos de texto no encontrados → "N/A" (exactamente así, en mayúsculas).
+- Campos de cantidad no encontrados → 0.
+- "telefono": solo dígitos, sin espacios ni guiones. Si no aparece → "N/A".
+- "municipio": solo el nombre del municipio, sin el departamento.
+- "producto": descripción breve de lo que se vendió (ej. "QyQ", "reloj cronógrafo", "pulsera"). Si no aparece → "N/A".
+- "cantidadRelojes": número entero de relojes mencionados. Si no aparece → 0.
+- "cantidadOtros": número entero de otros artículos no-relojes mencionados. Si no aparece → 0.
+- NO incluyas el departamento, eso se deduce por separado.
+- Responde ÚNICAMENTE con el JSON exacto, sin markdown, sin texto adicional.
+
+JSON de respuesta:
+{"nombreCliente":"","email":"","telefono":"","municipio":"","producto":"","cantidadRelojes":0,"cantidadOtros":0}`;
+};

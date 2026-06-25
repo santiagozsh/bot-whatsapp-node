@@ -70,3 +70,17 @@ export const ejecutarConRetry = async <T>(
     }
     throw new Error('ejecutarConRetry: se agotaron los intentos');
 };
+
+// 5. Normalizar texto para búsquedas (mayúsculas sin tildes ni diacríticos)
+/**
+ * Convierte un texto a mayúsculas y elimina tildes/diacríticos.
+ * Ejemplo: "Bogotá" → "BOGOTA", "Medellín" → "MEDELLIN", "ñoño" → "NONO"
+ * Usado por obtenerDepartamento() en colombia.data.ts y otros lookups locales.
+ */
+export const normalizarTexto = (texto: string): string => {
+    return texto
+        .toUpperCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .trim();
+};

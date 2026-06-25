@@ -1,6 +1,8 @@
 import { initializeWhatsApp } from './services/whatsapp.service';
+import { inicializarDB } from './services/memory.service';
 
 console.log('Iniciando el servidor...');
+inicializarDB();
 initializeWhatsApp();
 
 
