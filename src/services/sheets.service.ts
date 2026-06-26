@@ -20,12 +20,12 @@ export const inicializarGoogleSheets = async () => {
     return google.sheets({ version: 'v4', auth: cliente as any });
 };
 
-export const escribirFilaEnExcel = async (datosJSON: any) => {
+export const escribirFilaEnExcel = async (datosJSON: any): Promise<{ nPedido: string; filaIngreso: number } | null> => {
     try {
         const sheets = await inicializarGoogleSheets();
 
 
-        // PASO 1: Leer la última fila de la columna A para saber el N.Pedido
+        // PASO 1: Leer la última fila de la columna A para saber el N.Pedido y calcular filaIngreso
         console.log('🔍 Leyendo la columna A para calcular el N.Pedido...');
         const response = await sheets.spreadsheets.values.get({
             spreadsheetId: SPREADSHEET_ID,
@@ -34,7 +34,8 @@ export const escribirFilaEnExcel = async (datosJSON: any) => {
 
         const filas = response.data.values;
         let ultimoId = 'LG-00';
-        
+        const filaIngreso = (filas?.length || 0) + 1;
+
         if (filas && filas.length > 0) {
             // Tomamos el último valor que exista en la columna A
             ultimoId = filas[filas.length - 1]?.[0] || 'LG-00';
@@ -70,10 +71,12 @@ export const escribirFilaEnExcel = async (datosJSON: any) => {
             },
         });
 
-        console.log('✅ ¡Fila agregada correctamente a Google Sheets!');
+        console.log(`✅ ¡Fila agregada correctamente a Google Sheets! (${nuevoId} — fila ${filaIngreso})`);
+        return { nPedido: nuevoId, filaIngreso };
 
     } catch (error) {
         console.error('❌ Error escribiendo en Google Sheets:', error);
+        return null;
     }
 };
 
@@ -296,5 +299,78 @@ export const actualizarFilaIngreso = async (
 
     } catch (error) {
         console.error('❌ [INGRESOS] Error actualizando fila de ingreso:', error);
+    }
+};
+
+// ==========================================
+// Hoja Compras Mercancia
+// ==========================================
+
+const HOJA_COMPRAS = 'Compras Mercancia';
+
+export const escribirAbonoEnComprasMercancia = async (
+    fechaStr: string,
+    abono: string
+): Promise<void> => {
+    try {
+        const sheets = await inicializarGoogleSheets();
+        const fechaFormateada = formatearFecha(fechaStr);
+
+        const response = await sheets.spreadsheets.values.get({
+            spreadsheetId: SPREADSHEET_ID,
+            range: `${HOJA_COMPRAS}!A:E`,
+        });
+
+        const filas = response.data.values || [];
+        let filaEncontrada = -1;
+
+        for (let i = 1; i < filas.length; i++) {
+            const fila = filas[i];
+            if (!fila) continue;
+            const fechaCelda = fila[0] || '';
+            const proveedorCelda = (fila[1] || '').toString().trim().toLowerCase();
+            if (fechaCelda === fechaFormateada && proveedorCelda === 'bodega relojes') {
+                filaEncontrada = i + 1;
+                break;
+            }
+        }
+
+        const valorAbono = parseInt(abono.replace(/[^0-9]/g, ''), 10) || 0;
+
+        if (filaEncontrada > 0) {
+            const filaExistente = filas[filaEncontrada - 1];
+            const celdaActual = (filaExistente && filaExistente[4]) || '0';
+            const valorActual = parseInt(celdaActual.replace(/[^0-9]/g, ''), 10) || 0;
+            const nuevoValor = valorActual + valorAbono;
+
+            await sheets.spreadsheets.values.update({
+                spreadsheetId: SPREADSHEET_ID,
+                range: `${HOJA_COMPRAS}!E${filaEncontrada}`,
+                valueInputOption: 'USER_ENTERED',
+                requestBody: { values: [[nuevoValor.toString()]] },
+            });
+
+            console.log(`✅ [COMPRAS] Abono actualizado en fila ${filaEncontrada}: +$${valorAbono} = $${nuevoValor}`);
+        } else {
+            const nuevaFila = [
+                fechaFormateada,
+                'Bodega Relojes',
+                '',
+                '',
+                valorAbono.toString(),
+            ];
+
+            await sheets.spreadsheets.values.append({
+                spreadsheetId: SPREADSHEET_ID,
+                range: `${HOJA_COMPRAS}!A:E`,
+                valueInputOption: 'USER_ENTERED',
+                requestBody: { values: [nuevaFila] },
+            });
+
+            console.log(`✅ [COMPRAS] Nueva fila creada: ${fechaFormateada} | Bodega Relojes | $${valorAbono}`);
+        }
+
+    } catch (error) {
+        console.error('❌ [COMPRAS] Error escribiendo abono:', error);
     }
 };

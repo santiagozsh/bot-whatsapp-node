@@ -84,3 +84,19 @@ export const normalizarTexto = (texto: string): string => {
         .replace(/[\u0300-\u036f]/g, "")
         .trim();
 };
+
+// 6. Normalizar texto extraído por OCR para mejorar precisión de la IA
+export const normalizarTextoOCR = (texto: string): string => {
+    if (!texto) return texto;
+    return texto
+        .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')  // caracteres de control no imprimibles
+        .replace(/\r\n/g, '\n')                            // normalizar saltos de línea
+        .replace(/\r/g, '\n')
+        .replace(/[ \t]+/g, ' ')                           // múltiples espacios → uno solo
+        .replace(/\n{3,}/g, '\n\n')                        // múltiples saltos de línea → máximo 2
+        .replace(/[•·]/g, '-')                             // bullets a guiones
+        .replace(/[‒–—―]/g, '-')                           // guiones largos/medios a guión normal
+        .replace(/[""']/g, '"')                           // comillas curvas a rectas
+        .replace(/[''']/g, "'")
+        .trim();
+};

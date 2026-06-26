@@ -144,15 +144,15 @@
 > **Archivo:** `src/controllers/message.controller.ts`  
 > **Propósito:** Al cerrar la caja, después de procesar los comprobantes, extraer y escribir los datos del cliente para la última transacción válida (LIFO).
 
-- [ ] Al cierre del cronómetro, después del loop de imágenes de comprobante:
-  - [ ] Identificar la **última imagen válida** (último comprobante con `esComprobanteValido: true`)
-  - [ ] Recopilar su `textosEspecificos[]` + `imagenesCliente[]` + `cajaCerrada.textosPrevios[]`
-  - [ ] Para cada imagen en `imagenesCliente[]`: pasar por Tesseract OCR → texto
-  - [ ] Unir todo en un bloque de texto
-  - [ ] Si el bloque NO está vacío → llamar `extraerDatosCliente(bloque)`
-  - [ ] Si hay datos de cliente extraídos → llamar `escribirFilaVenta()`
-  - [ ] Guardar `filaVenta` en SQLite con `actualizarFilaVenta()`
-- [ ] **Verificar:** Mandar imagen de pago + texto de cliente al sandbox. Ver que aparece en las dos hojas.
+- [x] Al cierre del cronómetro, después del loop de imágenes de comprobante:
+  - [x] Identificar la **última imagen válida** (último comprobante con `esComprobanteValido: true`)
+  - [x] Recopilar su `textosEspecificos[]` + `imagenesCliente[]` + `cajaCerrada.textosPrevios[]`
+  - [x] Para cada imagen en `imagenesCliente[]`: pasar por Tesseract OCR → texto
+  - [x] Unir todo en un bloque de texto
+  - [x] Si el bloque NO está vacío → llamar `extraerDatosCliente(bloque)`
+  - [x] Si hay datos de cliente extraídos → llamar `escribirFilaVenta()`
+  - [x] Guardar `filaVenta` en SQLite con `actualizarFilaVenta()`
+- [x] **Verificar:** Mandar imagen de pago + texto de cliente al sandbox. Ver que aparece en las dos hojas.
 
 ---
 
@@ -161,12 +161,12 @@
 > **Archivo:** `src/controllers/message.controller.ts`  
 > **Propósito:** Cuando llega una imagen dentro de la caja (y ya hay un comprobante), evaluar si es otro comprobante o imagen con datos de cliente.
 
-- [ ] Cuando llega una imagen JPG/PNG y ya hay al menos una imagen en la caja:
-  - Descargar, comprimir con Sharp, pasar por Tesseract OCR
-  - Llamar `extraerDatosConIA()` para clasificar
-  - Si `esComprobanteValido: true` → agregar a `imagenes[]` como nuevo comprobante
-  - Si `esComprobanteValido: false` → agregar el base64 a `imagenesCliente[]` del último comprobante
-- [ ] **Verificar:** Mandar foto de pago + foto de formulario de cliente. El formulario debe ir a Ventas, el pago a Ingresos.
+- [x] Cuando llega una imagen JPG/PNG y ya hay al menos una imagen en la caja:
+  - [x] Descargar, comprimir con Sharp, pasar por Tesseract OCR
+  - [x] Llamar `extraerDatosConIA()` para clasificar
+  - [x] Si `esComprobanteValido: true` → agregar a `imagenes[]` como nuevo comprobante
+  - [x] Si `esComprobanteValido: false` → agregar el base64 a `imagenesCliente[]` del último comprobante
+- [x] **Verificar:** Mandar foto de pago + foto de formulario de cliente. El formulario debe ir a Ventas, el pago a Ingresos.
 
 ---
 
@@ -175,17 +175,17 @@
 > **Archivo:** `src/controllers/message.controller.ts`  
 > **Propósito:** Cuando llega un Reply a un mensaje cuyo messageId está en SQLite, procesarlo como corrección/complemento de datos de cliente.
 
-- [ ] Al recibir cualquier mensaje con `msg.hasQuotedMsg === true`:
-  - Obtener `quotedMessage.id._serialized`
-  - Consultar SQLite con `buscarTransaccion(quotedMessageId)`
-  - Si no existe en SQLite → ignorar (puede ser reply normal de conversación)
-  - Si existe:
-    - [ ] ¿Es texto? → pasar directamente a `extraerDatosCliente()`
-    - [ ] ¿Es imagen? → OCR primero, luego `extraerDatosCliente()`
-    - [ ] ¿`filaVenta` es NULL en SQLite? → `escribirFilaVenta()` (primera vez)
-    - [ ] ¿`filaVenta` existe? → `mergeFilaVenta()` (ya había datos, solo complementar)
-    - [ ] Actualizar SQLite si se creó una fila nueva en Ventas
-- [ ] **Verificar:** Mandar una imagen, esperar que la caja cierre (omitir datos de cliente), luego hacer Reply con los datos. Verificar que Ventas se llena correctamente.
+- [x] Al recibir cualquier mensaje con `msg.hasQuotedMsg === true`:
+  - [x] Obtener `quotedMessage.id._serialized`
+  - [x] Consultar SQLite con `buscarTransaccion(quotedMessageId)`
+  - [x] Si no existe en SQLite → ignorar (puede ser reply normal de conversación)
+  - [x] Si existe:
+    - [x] ¿Es texto? → pasar directamente a `extraerDatosCliente()`
+    - [x] ¿Es imagen? → OCR primero, luego `extraerDatosCliente()`
+    - [x] ¿`filaVenta` es NULL en SQLite? → `escribirFilaVenta()` (primera vez)
+    - [x] ¿`filaVenta` existe? → `mergeFilaVenta()` (ya había datos, solo complementar)
+    - [x] Actualizar SQLite si se creó una fila nueva en Ventas
+- [x] **Verificar:** Mandar una imagen, esperar que la caja cierre (omitir datos de cliente), luego hacer Reply con los datos. Verificar que Ventas se llena correctamente.
 
 ---
 
@@ -194,45 +194,45 @@
 > **Archivo:** `src/services/whatsapp.service.ts`  
 > **Propósito:** El bot responde en el grupo Sandbox con confirmaciones. En producción, silencio absoluto.
 
-- [ ] Agregar función `enviarMensaje(chat, texto: string)` en `whatsapp.service.ts`
-  - Solo ejecuta si `chat.name === 'Contabilidad'` (el sandbox)
-  - En producción simplemente no hace nada
-- [ ] Integrar confirmaciones en el cierre de caja (Bloque 7):
-  - `✅ LG-26 | $165.000 Nequi | Karol` — por cada comprobante válido
-  - `👤 LG-26 | Mateo Bedoya | Armenia, Quindío` — si se escribió Ventas
-  - `⚠️ Imagen no reconocida como comprobante` — si `esComprobanteValido: false`
-- [ ] Integrar confirmación en Reply tardío (Bloque 9):
-  - `🔄 LG-26 actualizado` — cuando se hace merge en Ventas
-- [ ] **Verificar:** En el sandbox, el bot responde. En el grupo de producción, silencio.
+- [x] Agregar función `enviarMensaje(chat, texto: string)` en `whatsapp.service.ts`
+  - [x] Solo ejecuta si `chat.name === 'Contabilidad'` (el sandbox)
+  - [x] En producción simplemente no hace nada
+- [x] Integrar confirmaciones en el cierre de caja (Bloque 7):
+  - [x] `✅ LG-26 | $165.000 Nequi | Karol` — por cada comprobante válido
+  - [x] `👤 LG-26 | Mateo Bedoya | Armenia, Quindío` — si se escribió Ventas
+  - [x] `⚠️ Imagen no reconocida como comprobante` — si `esComprobanteValido: false`
+- [x] Integrar confirmación en Reply tardío (Bloque 9):
+  - [x] `🔄 LG-26 actualizado` — cuando se hace merge en Ventas
+- [x] **Verificar:** En el sandbox, el bot responde. En el grupo de producción, silencio.
 
 ---
 
 ## BLOQUE 11 — Pruebas de integración end-to-end
 > **Prerequisito:** Todos los bloques anteriores.
 
-- [ ] **Escenario A** — Normal:
+- [x] **Escenario A** — Normal:
   Imagen de pago → texto del cliente → silencio
   Esperado: fila en Ingresos + fila en Ventas
 
-- [ ] **Escenario B** — Dos pagos seguidos + datos:
+- [x] **Escenario B** — Dos pagos seguidos + datos:
   Imagen pago1 → imagen pago2 → texto cliente → silencio
   Esperado: 2 filas en Ingresos + 1 fila en Ventas (asociada al pago2)
 
-- [ ] **Escenario C** — Datos antes del pago:
+- [x] **Escenario C** — Datos antes del pago:
   Texto cliente → imagen pago → silencio
   Esperado: fila en Ingresos + fila en Ventas
 
-- [ ] **Escenario D** — Imagen de cliente + imagen de pago:
+- [x] **Escenario D** — Imagen de cliente + imagen de pago:
   Imagen pago → imagen formulario cliente → silencio
   Esperado: fila en Ingresos + fila en Ventas con datos del formulario
 
-- [ ] **Escenario E** — Reply tardío:
+- [x] **Escenario E** — Reply tardío:
   Imagen pago → caja cierra (sin datos cliente) → Reply con datos → Ventas se llena
 
-- [ ] **Escenario F** — Imagen no válida:
+- [x] **Escenario F** — Imagen no válida:
   Foto de un reloj (no comprobante) → descartada, sin escritura en ninguna hoja
 
-- [ ] **Escenario G** — Sticker/audio/video:
+- [x] **Escenario G** — Sticker/audio/video:
   Descartado por el portero, sin costo de tokens
 
 ---
@@ -258,9 +258,9 @@
 | 4 | Prompt B cliente | `[x]` |
 | 5 | extraerDatosCliente() | `[x]` |
 | 6 | escribirFilaVenta() + merge | `[x]` |
-| 7 | Cierre de caja dual | `[ ]` |
-| 8 | Imagen adicional en caja | `[ ]` |
-| 9 | Reply tardío | `[ ]` |
-| 10 | Respuestas sandbox | `[ ]` |
-| 11 | Pruebas end-to-end | `[ ]` |
+| 7 | Cierre de caja dual | `[x]` |
+| 8 | Imagen adicional en caja | `[x]` |
+| 9 | Reply tardío | `[x]` |
+| 10 | Respuestas sandbox | `[x]` |
+| 11 | Pruebas end-to-end | `[x]` |
 | 12 | Documentación | `[ ]` |

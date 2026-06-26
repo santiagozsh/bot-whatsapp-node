@@ -2,6 +2,13 @@ import { Client, LocalAuth } from 'whatsapp-web.js';
 import * as qrcode from 'qrcode-terminal';
 import { procesarMensajeEntrante } from '../controllers/message.controller';
 
+export const enviarMensaje = async (chat: any, texto: string) => {
+    if (chat.name === 'Contabilidad') {
+        await chat.sendMessage(texto);
+        console.log(`📤 [SANDBOX] ${texto}`);
+    }
+};
+
 export const initializeWhatsApp = () => {
     // 1. Configuramos el cliente con persistencia de sesión
     const client = new Client({
@@ -38,7 +45,7 @@ export const initializeWhatsApp = () => {
 
             // 1. Lista Blanca (Whitelist) de grupos autorizados
             const gruposAutorizados = [
-                'Contabilidad| Empresa Luxury Gotti', // El de producción
+                // 'Contabilidad| Empresa Luxury Gotti', // El de producción
                 'Contabilidad'                        // El de tu Sandbox
             ];
 

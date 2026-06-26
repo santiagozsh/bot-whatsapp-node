@@ -1,24 +1,38 @@
 import Tesseract from 'tesseract.js';
 
+type ModoOCR = 'comprobante' | 'formulario';
+
 /**
  * Extrae todo el texto de una imagen usando Tesseract OCR (local, sin APIs externas).
- * Optimizado para comprobantes bancarios colombianos (Nequi, Bancolombia, Daviplata).
+ *
+ * @param imagenBase64 - Imagen en base64
+ * @param modo - 'comprobante' (default) | 'formulario' (PSM SINGLE_BLOCK)
  */
-export const extraerTextoConVision = async (imagenBase64: string): Promise<string> => {
+export const extraerTextoConVision = async (
+    imagenBase64: string,
+    modo: ModoOCR = 'comprobante'
+): Promise<string> => {
     try {
-        console.log('👁️ [OCR] Extrayendo texto con Tesseract...');
+        console.log(`👁️ [OCR] Extrayendo texto con Tesseract (${modo})...`);
 
-        // Convertimos el base64 a un Buffer que Tesseract puede leer
         const buffer = Buffer.from(imagenBase64, 'base64');
 
-        const resultado = await Tesseract.recognize(
-            buffer,
-            'spa+eng', // Español + Inglés (cubre términos bancarios en ambos idiomas)
-            {
-                // Silenciamos los logs internos de Tesseract para no ensuciar la consola
-                logger: () => {},
-            }
-        );
+        let resultado: Tesseract.RecognizeResult;
+
+        if (modo === 'formulario') {
+            const worker = await Tesseract.createWorker('spa+eng', Tesseract.OEM.LSTM_ONLY);
+            await worker.setParameters({
+                tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK,
+            });
+            resultado = await worker.recognize(buffer);
+            await worker.terminate();
+        } else {
+            resultado = await Tesseract.recognize(
+                buffer,
+                'spa+eng',
+                { logger: () => {} }
+            );
+        }
 
         const textoExtraido = resultado.data.text.trim();
 

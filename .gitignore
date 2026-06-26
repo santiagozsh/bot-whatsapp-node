@@ -65,3 +65,4 @@ google-keys.json
 .artifacts/
 spa.traineddata
 eng.traineddata
+bot_memory.db

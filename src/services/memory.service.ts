@@ -99,3 +99,11 @@ export function actualizarFilaVenta(messageId: string, filaVenta: number): void 
 
     console.log(`[DB] filaVenta actualizada — messageId: ${messageId} | filaVenta: ${filaVenta}`);
 }
+
+export function buscarTransaccionPorNPedido(nPedido: string): Transaccion | null {
+    const row = db.prepare(`
+        SELECT * FROM historial_transacciones WHERE nPedido = ?
+    `).get(nPedido) as Transaccion | undefined;
+
+    return row ?? null;
+}
