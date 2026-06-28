@@ -1,4 +1,5 @@
 import Tesseract from 'tesseract.js';
+import { logger } from '../utils/logger';
 
 type ModoOCR = 'comprobante' | 'formulario';
 
@@ -13,7 +14,7 @@ export const extraerTextoConVision = async (
     modo: ModoOCR = 'comprobante'
 ): Promise<string> => {
     try {
-        console.log(`👁️ [OCR] Extrayendo texto con Tesseract (${modo})...`);
+        logger.info('OCR', `Extrayendo texto (${modo})...`);
 
         const buffer = Buffer.from(imagenBase64, 'base64');
 
@@ -37,15 +38,15 @@ export const extraerTextoConVision = async (
         const textoExtraido = resultado.data.text.trim();
 
         if (!textoExtraido) {
-            console.warn('⚠️ [OCR] No se detectó texto en la imagen.');
+            logger.warn('OCR', 'No se detectó texto en la imagen.');
             return 'SIN_TEXTO_DETECTADO';
         }
 
-        console.log(`✅ [OCR] Texto extraído (${textoExtraido.length} caracteres).`);
+        logger.info('OCR', `Texto extraído (${textoExtraido.length} caracteres).`);
         return textoExtraido;
 
     } catch (error) {
-        console.error('❌ [OCR] Error en Tesseract:', error);
+        logger.error('OCR', 'Error en Tesseract:', error);
         throw error;
     }
 };

@@ -22,9 +22,9 @@ PASO 2 - EXTRACCIÓN (solo si es comprobante válido):
     - "3106131751" o "310 613 1751" o "3103455869" o "310 345 5869"
     - "03759053996" o "037-590539-96" (cuenta Bancolombia)
   * Si es "Abono" → medioDePago debe ser "Nequi bodega"
-  * Cualquier otra cuenta → "Egreso"
+  * Cualquier otra cuenta → "Ingreso"
 - descripcion: 3 o más artículos en el contexto de WhatsApp → "Pedido mayorista", si no → "Pedido al por menor"
-- vendedor: busca Evelin, Alejandra o Karol en el contexto. Si no aparece ninguno → "JHON"
+- vendedor: busca Evelin, Alejandra, Karol, David y en general el formato "Venta: nombre" en el contexto. Si no aparece ninguno → "JHON"
 
 Responde ÚNICAMENTE con este JSON exacto:
 {"esComprobanteValido":true,"fecha":"DD/MM/YYYY","tipo":"Ingreso","descripcion":"Pedido al por menor","precioCompra":"165000","medioDePago":"Nequi","referenciaDePago":"M11650120","cuentaDestino":"3143527475","vendedor":"JHON"}`;
@@ -43,9 +43,11 @@ REGLAS:
 - "telefono": solo dígitos, sin espacios ni guiones. Si no aparece → "N/A".
 - "municipio": solo el nombre del municipio, sin el departamento.
 - "producto": lista COMPLETA de todos los productos/artículos encontrados en el texto, exactamente como aparecen, separados por comas. Ejemplo: "RM 60.000, Patek 60.000, Gforce 135.000, 5 Cajas de lujo 55.000, Envío 18.000". NO resumas ni combines. Si no aparece ningún producto → "N/A".
+- "nombreCliente": SOLO si el texto menciona explícitamente el nombre de un comprador/cliente (ej. "nombre: Juan", "cliente: Maria", "pedido de Pedro"). NO confundas "venta Evelin", "venta Alejandra", "venta Karol" con nombre de cliente — esas frases indican quién vendió, no quién compró. Si solo aparece "venta X" sin datos de comprador → "N/A".
+- "vendedor": busca en el texto si se menciona "venta" seguido de un nombre (Evelin, Alejandra, Aleja, Karol) o si aparece explícitamente "vendedor: nombre". Si no se encuentra → "N/A".
 - NO incluyas el departamento, eso se deduce por separado.
 - Responde ÚNICAMENTE con el JSON exacto, sin markdown, sin texto adicional.
 
 JSON de respuesta:
-{"nombreCliente":"","email":"","telefono":"","municipio":"","producto":""}`;
+{"nombreCliente":"","email":"","telefono":"","municipio":"","producto":"","vendedor":""}`;
 };

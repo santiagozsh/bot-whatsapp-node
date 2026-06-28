@@ -3,14 +3,13 @@ import * as path from 'path';
 import * as dotenv from 'dotenv';
 import { formatearFecha, formatearCuenta, generarSiguienteId } from '../utils/helpers';
 import { obtenerDepartamento } from '../utils/colombia.data';
+import { logger } from '../utils/logger';
 
 dotenv.config();
 
-// El ID de tu Excel (Lo sacas de la URL de tu Google Sheets: https://docs.google.com/spreadsheets/d/AQUI_ESTA_EL_ID/edit)
 const SPREADSHEET_ID = process.env.GOOGLE_SHEETS_ID as string;
 
-export const inicializarGoogleSheets = async () => {
-    // Busca el archivo de llaves en la raíz del proyecto
+const inicializarGoogleSheets = async () => {
     const auth = new google.auth.GoogleAuth({
         keyFile: path.join(__dirname, '../../google-keys.json'),
         scopes: ['https://www.googleapis.com/auth/spreadsheets'],
@@ -24,12 +23,10 @@ export const escribirFilaEnExcel = async (datosJSON: any): Promise<{ nPedido: st
     try {
         const sheets = await inicializarGoogleSheets();
 
-
-        // PASO 1: Leer la última fila de la columna A para saber el N.Pedido y calcular filaIngreso
-        console.log('🔍 Leyendo la columna A para calcular el N.Pedido...');
+        logger.info('SHEETS', 'Leyendo columna A para calcular N.Pedido...');
         const response = await sheets.spreadsheets.values.get({
             spreadsheetId: SPREADSHEET_ID,
-            range: 'Ingresos transacciones!A:A', // Solo leemos la columna A
+            range: 'Ingresos transacciones!A:A',
         });
 
         const filas = response.data.values;
@@ -37,97 +34,46 @@ export const escribirFilaEnExcel = async (datosJSON: any): Promise<{ nPedido: st
         const filaIngreso = (filas?.length || 0) + 1;
 
         if (filas && filas.length > 0) {
-            // Tomamos el último valor que exista en la columna A
             ultimoId = filas[filas.length - 1]?.[0] || 'LG-00';
         }
 
-        // PASO 2: Procesar los datos con nuestros Helpers
         const nuevoId = generarSiguienteId(ultimoId);
         const fechaLimpia = formatearFecha(datosJSON.fecha);
         const cuentaLimpia = formatearCuenta(datosJSON.cuentaDestino);
 
-        // PASO 3: Construir la fila final usando los datos de la IA
         const filaDeDatos = [
-            nuevoId,                               // N.Pedido
-            fechaLimpia,                           // Fecha
-            datosJSON.tipo || "Ingreso",           // Tipo dinámico
-            datosJSON.descripcion || "Pedido al por menor", // Descripción dinámica
-            datosJSON.precioCompra,                // Precio
-            datosJSON.medioDePago,                 // Medio
-            datosJSON.referenciaDePago,            // Referencia
-            cuentaLimpia,                          // # Cuenta
-            datosJSON.vendedor || "JHON"           // ¡Vendedor dinámico! (JHON por defecto si falla)
+            nuevoId,
+            fechaLimpia,
+            datosJSON.tipo || "Ingreso",
+            datosJSON.descripcion || "Pedido al por menor",
+            datosJSON.precioCompra,
+            datosJSON.medioDePago,
+            datosJSON.referenciaDePago,
+            cuentaLimpia,
+            datosJSON.vendedor || "JHON",
         ];
-
-        console.log('📝 Escribiendo datos en Google Sheets...');
 
         await sheets.spreadsheets.values.append({
             spreadsheetId: SPREADSHEET_ID,
-            // "Ingresos transacciones" es el nombre exacto de la pestaña en tu Excel
-            range: 'Ingresos transacciones!A:I', 
-            valueInputOption: 'USER_ENTERED', // Para que Excel respete el formato de números y fechas
-            requestBody: {
-                values: [filaDeDatos],
-            },
+            range: 'Ingresos transacciones!A:I',
+            valueInputOption: 'USER_ENTERED',
+            requestBody: { values: [filaDeDatos] },
         });
 
-        console.log(`✅ ¡Fila agregada correctamente a Google Sheets! (${nuevoId} — fila ${filaIngreso})`);
+        logger.info('SHEETS', `Fila creada: ${nuevoId} (fila ${filaIngreso})`);
         return { nPedido: nuevoId, filaIngreso };
 
     } catch (error) {
-        console.error('❌ Error escribiendo en Google Sheets:', error);
+        logger.error('SHEETS', 'Error escribiendo fila:', error);
         return null;
     }
 };
 
-// ==========================================
-// MODO DE PRUEBA AISLADA
-// ==========================================
-// if (require.main === module) {
-//     const datosDePrueba = {
-//         fecha: "19/06/2026",
-//         precioCompra: "165000",
-//         medioDePago: "Nequi",
-//         referenciaDePago: "M11650120",
-//         cuentaDestino: "3143527475"
-//     };
-
-//     // Si falta el ID del Excel, avisamos
-//     if (!SPREADSHEET_ID) {
-//         console.error('⚠️ Faltó poner el GOOGLE_SHEETS_ID en el archivo .env');
-//     } else {
-//         escribirFilaEnExcel(datosDePrueba);
-//     }
-// }
-
-// ==========================================
-// BLOQUE 6 — Hoja Ventas
-// ==========================================
-
-/**
- * Campos de la hoja "Ingresos transacciones" que se pueden actualizar
- * parcialmente desde un Reply tardío (ej. corrección de vendedor o tipo).
- *
- * Columna C = tipo (índice 2)
- * Columna I = vendedor (índice 8)
- */
 interface DatosIngreso {
     tipo?: string;
     vendedor?: string;
 }
 
-/**
- * Crea una fila nueva en la hoja Ventas con los datos del cliente.
- *
- * El departamento se deduce localmente desde el municipio usando el diccionario
- * colombia.data.ts, sin gastar tokens adicionales de OpenAI.
- *
- * @param datosCliente  JSON retornado por extraerDatosCliente()
- * @param nPedido       Identificador del pedido (ej. "LG-26")
- * @param fecha         Fecha formateada (ej. "25-Jun-2026")
- * @returns             Número de fila creado en la hoja (1-indexed), para guardarlo en SQLite.
- *                      Retorna -1 si ocurre un error.
- */
 export const escribirFilaVenta = async (
     datosCliente: any,
     nPedido: string,
@@ -137,34 +83,30 @@ export const escribirFilaVenta = async (
         const sheets = await inicializarGoogleSheets();
         const hojaVentas = process.env.SHEETS_VENTAS_NOMBRE || 'Ventas';
 
-        // PASO 1: Leer la columna A para calcular el número de la próxima fila
         const lecturaActual = await sheets.spreadsheets.values.get({
             spreadsheetId: SPREADSHEET_ID,
             range: `${hojaVentas}!A:A`,
         });
 
         const filasExistentes = lecturaActual.data.values || [];
-        // La nueva fila ocupa la posición después de las existentes (incluye cabecera)
         const numeroFilaNueva = filasExistentes.length + 1;
 
-        // PASO 2: Deducir el departamento localmente (sin tokens de IA)
         const departamento = obtenerDepartamento(datosCliente.municipio || '');
 
-        // PASO 3: Construir la fila de 10 columnas (A → J)
         const filaDeDatos = [
-            nPedido,                                   // A — N.Pedido
-            fecha,                                     // B — Fecha
-            datosCliente.nombreCliente  || 'N/A',      // C — Nombre Cliente
-            datosCliente.email          || 'N/A',      // D — Email
-            datosCliente.telefono       || 'N/A',      // E — Teléfono
-            datosCliente.municipio      || 'N/A',      // F — Municipio
-            departamento,                              // G — Departamento (diccionario local)
-            datosCliente.producto       || 'N/A',      // H — Producto
-            datosCliente.cantidadRelojes ?? 0,         // I — Cant. Relojes
-            datosCliente.cantidadOtros  ?? 0,          // J — Cant. Otros
+            nPedido,
+            fecha,
+            datosCliente.nombreCliente  || 'N/A',
+            datosCliente.email          || 'N/A',
+            datosCliente.telefono       || 'N/A',
+            datosCliente.municipio      || 'N/A',
+            departamento,
+            datosCliente.producto       || 'N/A',
+            datosCliente.cantidadRelojes ?? 0,
+            datosCliente.cantidadOtros  ?? 0,
         ];
 
-        console.log(`📝 [VENTAS] Escribiendo fila ${numeroFilaNueva} en "${hojaVentas}"...`);
+        logger.info('SHEETS', `Escribiendo Ventas fila ${numeroFilaNueva} para ${nPedido}...`);
 
         await sheets.spreadsheets.values.append({
             spreadsheetId: SPREADSHEET_ID,
@@ -173,24 +115,15 @@ export const escribirFilaVenta = async (
             requestBody: { values: [filaDeDatos] },
         });
 
-        console.log(`✅ [VENTAS] Fila ${numeroFilaNueva} creada correctamente para ${nPedido}.`);
+        logger.info('SHEETS', `Ventas fila ${numeroFilaNueva} creada para ${nPedido}`);
         return numeroFilaNueva;
 
     } catch (error) {
-        console.error('❌ [VENTAS] Error escribiendo fila de venta:', error);
+        logger.error('SHEETS', 'Error escribiendo fila de venta:', error);
         return -1;
     }
 };
 
-/**
- * Actualiza una fila ya existente en la hoja Ventas con datos nuevos,
- * pero SOLO sobreescribe las celdas que están vacías, en "N/A", o en 0.
- *
- * Esto permite complementar datos parciales sin borrar lo que ya había.
- *
- * @param filaVenta   Número de fila en la hoja (1-indexed, ej. 5 → fila 5)
- * @param datosNuevos JSON con los datos frescos del cliente
- */
 export const mergeFilaVenta = async (
     filaVenta: number,
     datosNuevos: any
@@ -199,7 +132,6 @@ export const mergeFilaVenta = async (
         const sheets = await inicializarGoogleSheets();
         const hojaVentas = process.env.SHEETS_VENTAS_NOMBRE || 'Ventas';
 
-        // PASO 1: Leer la fila actual completa (columnas A→J)
         const lecturaActual = await sheets.spreadsheets.values.get({
             spreadsheetId: SPREADSHEET_ID,
             range: `${hojaVentas}!A${filaVenta}:J${filaVenta}`,
@@ -207,32 +139,27 @@ export const mergeFilaVenta = async (
 
         const filaActual: string[] = lecturaActual.data.values?.[0] || [];
 
-        // Función auxiliar: decide si un valor actual está "vacío" y debe reemplazarse
         const estaVacio = (valor: string | undefined): boolean => {
             if (valor === undefined || valor === null) return true;
             const limpio = valor.toString().trim().toUpperCase();
             return limpio === '' || limpio === 'N/A' || limpio === '0';
         };
 
-        // Deducir departamento del municipio nuevo (por si el original era N/A)
         const deptoNuevo = obtenerDepartamento(datosNuevos.municipio || '');
 
-        // PASO 2: Construir la fila resultante: mantener valor actual si ya tiene datos,
-        //         usar el nuevo si el actual estaba vacío.
         const filaFinal = [
-            filaActual[0] || '',                                                    // A — N.Pedido (nunca se toca)
-            filaActual[1] || '',                                                    // B — Fecha (nunca se toca)
-            estaVacio(filaActual[2]) ? (datosNuevos.nombreCliente  || 'N/A') : filaActual[2], // C — Nombre
-            estaVacio(filaActual[3]) ? (datosNuevos.email          || 'N/A') : filaActual[3], // D — Email
-            estaVacio(filaActual[4]) ? (datosNuevos.telefono       || 'N/A') : filaActual[4], // E — Teléfono
-            estaVacio(filaActual[5]) ? (datosNuevos.municipio      || 'N/A') : filaActual[5], // F — Municipio
-            estaVacio(filaActual[6]) ? deptoNuevo                             : filaActual[6], // G — Departamento
-            estaVacio(filaActual[7]) ? (datosNuevos.producto       || 'N/A') : filaActual[7], // H — Producto
-            estaVacio(filaActual[8]) ? (datosNuevos.cantidadRelojes ?? 0)    : filaActual[8], // I — Cant. Relojes
-            estaVacio(filaActual[9]) ? (datosNuevos.cantidadOtros  ?? 0)    : filaActual[9], // J — Cant. Otros
+            filaActual[0] || '',
+            filaActual[1] || '',
+            estaVacio(filaActual[2]) ? (datosNuevos.nombreCliente  || 'N/A') : filaActual[2],
+            estaVacio(filaActual[3]) ? (datosNuevos.email          || 'N/A') : filaActual[3],
+            estaVacio(filaActual[4]) ? (datosNuevos.telefono       || 'N/A') : filaActual[4],
+            estaVacio(filaActual[5]) ? (datosNuevos.municipio      || 'N/A') : filaActual[5],
+            estaVacio(filaActual[6]) ? deptoNuevo                             : filaActual[6],
+            estaVacio(filaActual[7]) ? (datosNuevos.producto       || 'N/A') : filaActual[7],
+            estaVacio(filaActual[8]) ? (datosNuevos.cantidadRelojes ?? 0)    : filaActual[8],
+            estaVacio(filaActual[9]) ? (datosNuevos.cantidadOtros  ?? 0)    : filaActual[9],
         ];
 
-        // PASO 3: Escribir la fila mezclada de vuelta
         await sheets.spreadsheets.values.update({
             spreadsheetId: SPREADSHEET_ID,
             range: `${hojaVentas}!A${filaVenta}:J${filaVenta}`,
@@ -240,22 +167,13 @@ export const mergeFilaVenta = async (
             requestBody: { values: [filaFinal] },
         });
 
-        console.log(`✅ [VENTAS] Fila ${filaVenta} actualizada (merge) correctamente.`);
+        logger.info('SHEETS', `Ventas fila ${filaVenta} mergeada`);
 
     } catch (error) {
-        console.error('❌ [VENTAS] Error haciendo merge en fila de venta:', error);
+        logger.error('SHEETS', 'Error en merge de venta:', error);
     }
 };
 
-/**
- * Actualiza columnas específicas de una fila en "Ingresos transacciones".
- *
- * Solo escribe las columnas que se indiquen en `campos`, sin tocar las demás.
- * Útil para Reply tardío donde el usuario corrige el vendedor o el tipo.
- *
- * @param filaIngreso  Número de fila en la hoja (1-indexed)
- * @param campos       Objeto parcial con los campos a actualizar (tipo y/o vendedor)
- */
 export const actualizarFilaIngreso = async (
     filaIngreso: number,
     campos: Partial<DatosIngreso>
@@ -263,13 +181,11 @@ export const actualizarFilaIngreso = async (
     try {
         const sheets = await inicializarGoogleSheets();
 
-        // Mapa de campo → columna de la hoja "Ingresos transacciones"
         const mapColumnas: Record<keyof DatosIngreso, string> = {
-            tipo:     'C',   // columna C
-            vendedor: 'I',   // columna I
+            tipo:     'C',
+            vendedor: 'I',
         };
 
-        // Construir los rangos de actualización solo para los campos provistos
         const data: { range: string; values: string[][] }[] = [];
 
         for (const [campo, valor] of Object.entries(campos) as [keyof DatosIngreso, string][]) {
@@ -283,7 +199,7 @@ export const actualizarFilaIngreso = async (
         }
 
         if (data.length === 0) {
-            console.log('⚠️ [INGRESOS] actualizarFilaIngreso: ningún campo válido para actualizar.');
+            logger.warn('SHEETS', 'actualizarFilaIngreso: ningún campo válido');
             return;
         }
 
@@ -295,16 +211,12 @@ export const actualizarFilaIngreso = async (
             },
         });
 
-        console.log(`✅ [INGRESOS] Fila ${filaIngreso} actualizada: ${Object.keys(campos).join(', ')}.`);
+        logger.info('SHEETS', `Ingreso fila ${filaIngreso} actualizado: ${Object.keys(campos).join(', ')}`);
 
     } catch (error) {
-        console.error('❌ [INGRESOS] Error actualizando fila de ingreso:', error);
+        logger.error('SHEETS', 'Error actualizando fila de ingreso:', error);
     }
 };
-
-// ==========================================
-// Hoja Compras Mercancia
-// ==========================================
 
 const HOJA_COMPRAS = 'Compras Mercancia';
 
@@ -350,7 +262,7 @@ export const escribirAbonoEnComprasMercancia = async (
                 requestBody: { values: [[nuevoValor.toString()]] },
             });
 
-            console.log(`✅ [COMPRAS] Abono actualizado en fila ${filaEncontrada}: +$${valorAbono} = $${nuevoValor}`);
+            logger.info('SHEETS', `Abono actualizado en fila ${filaEncontrada}: +$${valorAbono}`);
         } else {
             const nuevaFila = [
                 fechaFormateada,
@@ -367,10 +279,10 @@ export const escribirAbonoEnComprasMercancia = async (
                 requestBody: { values: [nuevaFila] },
             });
 
-            console.log(`✅ [COMPRAS] Nueva fila creada: ${fechaFormateada} | Bodega Relojes | $${valorAbono}`);
+            logger.info('SHEETS', `Nueva fila Compras: ${fechaFormateada} | Bodega Relojes | $${valorAbono}`);
         }
 
     } catch (error) {
-        console.error('❌ [COMPRAS] Error escribiendo abono:', error);
+        logger.error('SHEETS', 'Error en abono:', error);
     }
 };

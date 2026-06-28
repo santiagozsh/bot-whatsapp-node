@@ -1,3 +1,5 @@
+import { logger } from './logger';
+
 // 1. Generar el identificador único en cascada
 export const generarSiguienteId = (ultimoId: string): string => {
     // Si la hoja está vacía y no hay ID previo, arrancamos en LG-01
@@ -64,7 +66,7 @@ export const ejecutarConRetry = async <T>(
             }
 
             const espera = delayBaseMs * Math.pow(2, intento); // 1s, 2s, 4s...
-            console.log(`⏳ [RETRY] Intento ${intento + 1}/${maxIntentos} falló (${statusCode}). Reintentando en ${espera / 1000}s...`);
+            logger.warn('RETRY', `Intento ${intento + 1}/${maxIntentos} falló (${statusCode}). Reintentando en ${espera / 1000}s...`);
             await new Promise(resolve => setTimeout(resolve, espera));
         }
     }

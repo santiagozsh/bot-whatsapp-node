@@ -36,22 +36,30 @@ const KEYWORDS_COMBO: Set<string> = new Set([
     "MONEY", "YAKARTA", "RIO", "INICIO INTELIGENTE",
 ]);
 
+const CANTIDAD_MAXIMA = 50;
+
+function parsearCantidadSegura(valor: string): number {
+    const n = parseInt(valor, 10);
+    if (isNaN(n) || n <= 0 || n > CANTIDAD_MAXIMA) return 1;
+    return n;
+}
+
 function extraerCantidad(item: string): { cantidad: number; textoLimpio: string } {
     const t = item.trim();
 
     const trailingMult = t.match(/^(.+?)\s*[×xX]\s*(\d+)$/);
     if (trailingMult && trailingMult[1] && trailingMult[2]) {
-        return { cantidad: parseInt(trailingMult[2], 10), textoLimpio: trailingMult[1].trim() };
+        return { cantidad: parsearCantidadSegura(trailingMult[2]), textoLimpio: trailingMult[1].trim() };
     }
 
     const leadingMult = t.match(/^(\d+)\s*[×xX]\s*(.+)/);
     if (leadingMult && leadingMult[1] && leadingMult[2]) {
-        return { cantidad: parseInt(leadingMult[1], 10), textoLimpio: leadingMult[2].trim() };
+        return { cantidad: parsearCantidadSegura(leadingMult[1]), textoLimpio: leadingMult[2].trim() };
     }
 
     const leadingQty = t.match(/^(\d+)\s+(.+)/);
     if (leadingQty && leadingQty[1] && leadingQty[2]) {
-        return { cantidad: parseInt(leadingQty[1], 10), textoLimpio: leadingQty[2].trim() };
+        return { cantidad: parsearCantidadSegura(leadingQty[1]), textoLimpio: leadingQty[2].trim() };
     }
 
     return { cantidad: 1, textoLimpio: t };
