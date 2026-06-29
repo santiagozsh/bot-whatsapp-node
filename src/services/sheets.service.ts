@@ -4,6 +4,7 @@ import * as dotenv from 'dotenv';
 import { formatearFecha, formatearCuenta, generarSiguienteId } from '../utils/helpers';
 import { obtenerDepartamento } from '../utils/colombia.data';
 import { logger } from '../utils/logger';
+import type { DatosIngreso, DatosCliente, DatosIngresoParcial } from '../types';
 
 dotenv.config();
 
@@ -19,7 +20,7 @@ const inicializarGoogleSheets = async () => {
     return google.sheets({ version: 'v4', auth: cliente as any });
 };
 
-export const escribirFilaEnExcel = async (datosJSON: any): Promise<{ nPedido: string; filaIngreso: number } | null> => {
+export const escribirFilaEnExcel = async (datosJSON: DatosIngreso): Promise<{ nPedido: string; filaIngreso: number } | null> => {
     try {
         const sheets = await inicializarGoogleSheets();
 
@@ -69,13 +70,9 @@ export const escribirFilaEnExcel = async (datosJSON: any): Promise<{ nPedido: st
     }
 };
 
-interface DatosIngreso {
-    tipo?: string;
-    vendedor?: string;
-}
 
 export const escribirFilaVenta = async (
-    datosCliente: any,
+    datosCliente: DatosCliente,
     nPedido: string,
     fecha: string
 ): Promise<number> => {
@@ -126,7 +123,7 @@ export const escribirFilaVenta = async (
 
 export const mergeFilaVenta = async (
     filaVenta: number,
-    datosNuevos: any
+    datosNuevos: DatosCliente
 ): Promise<void> => {
     try {
         const sheets = await inicializarGoogleSheets();
@@ -176,19 +173,19 @@ export const mergeFilaVenta = async (
 
 export const actualizarFilaIngreso = async (
     filaIngreso: number,
-    campos: Partial<DatosIngreso>
+    campos: DatosIngresoParcial
 ): Promise<void> => {
     try {
         const sheets = await inicializarGoogleSheets();
 
-        const mapColumnas: Record<keyof DatosIngreso, string> = {
+        const mapColumnas: Record<string, string> = {
             tipo:     'C',
             vendedor: 'I',
         };
 
         const data: { range: string; values: string[][] }[] = [];
 
-        for (const [campo, valor] of Object.entries(campos) as [keyof DatosIngreso, string][]) {
+        for (const [campo, valor] of Object.entries(campos)) {
             if (valor !== undefined && valor !== null) {
                 const col = mapColumnas[campo];
                 data.push({

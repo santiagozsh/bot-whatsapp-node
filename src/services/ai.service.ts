@@ -2,9 +2,10 @@ import OpenAI from 'openai';
 import * as dotenv from 'dotenv';
 import sharp from 'sharp';
 import { construirPromptContable, construirPromptCliente } from '../utils/prompts';
-import { clasificarProducto } from '../utils/luxurygotti.data';
-import { ejecutarConRetry } from '../utils/helpers';
+import { extraerListaProductos } from '../utils/luxurygotti.data';
+import { ejecutarConRetry, clasificarTipoIngreso, extraerVendedor } from '../utils/helpers';
 import { logger } from '../utils/logger';
+import type { DatosIngreso, DatosCliente } from '../types';
 
 dotenv.config();
 
@@ -32,14 +33,24 @@ export async function optimizarImagenParaOCR(base64String: string): Promise<stri
     }
 }
 
+interface DatosOCRBrutos {
+    esComprobanteValido: boolean;
+    fecha?: string;
+    descripcion?: string;
+    precioCompra?: string;
+    medioDePago?: string;
+    referenciaDePago?: string;
+    cuentaDestino?: string;
+}
+
 /**
- * Envía texto OCR pre-extraído a OpenAI para extraer datos financieros.
- * Sin compresión ni OCR — solo el prompt + texto.
+ * Envía texto OCR a OpenAI (Prompt A).
+ * Luego clasifica tipo y extrae vendedor en TypeScript (determinístico, 0 tokens).
  */
 export const extraerDatosDesdeTextoOCR = async (
     textoOCR: string,
     contextoTexto: string
-) => {
+): Promise<DatosIngreso | undefined> => {
     try {
         const openaiModel = process.env.OPENAI_MODEL || 'gpt-4o-mini';
         const prompt = construirPromptContable(contextoTexto, textoOCR);
@@ -57,14 +68,37 @@ export const extraerDatosDesdeTextoOCR = async (
 
         const respuestaJson = resultado.choices[0]?.message?.content || '{}';
         logger.info('AI', `Respuesta: ${respuestaJson.substring(0, 200)}...`);
-        return JSON.parse(respuestaJson);
+
+        const crudo: DatosOCRBrutos = JSON.parse(respuestaJson);
+
+        if (!crudo.esComprobanteValido) return undefined;
+
+        const cuenta = crudo.cuentaDestino || '';
+        const tipo = clasificarTipoIngreso(cuenta, textoOCR);
+        const vendedor = extraerVendedor(contextoTexto);
+
+        const medioDePago = tipo === 'Abono'
+            ? 'Nequi bodega'
+            : (crudo.medioDePago || 'Nequi');
+
+        return {
+            esComprobanteValido: true,
+            fecha:            crudo.fecha            || 'N/A',
+            tipo,
+            descripcion:      crudo.descripcion      || 'Pedido al por menor',
+            precioCompra:     crudo.precioCompra     || '0',
+            medioDePago,
+            referenciaDePago: crudo.referenciaDePago || 'N/A',
+            cuentaDestino:    cuenta                 || 'N/A',
+            vendedor,
+        };
 
     } catch (error) {
         logger.error('AI', 'Error al procesar con IA:', error);
     }
 };
 
-export const extraerDatosCliente = async (bloqueTexto: string) => {
+export const extraerDatosCliente = async (bloqueTexto: string): Promise<DatosCliente | undefined> => {
     try {
         const openaiModel = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 
@@ -82,13 +116,22 @@ export const extraerDatosCliente = async (bloqueTexto: string) => {
         logger.tokenUsage(uso?.prompt_tokens || 0, uso?.completion_tokens || 0);
 
         const respuestaJson = resultado.choices[0]?.message?.content || '{}';
-        const datosCliente = JSON.parse(respuestaJson);
+        const crudo = JSON.parse(respuestaJson);
 
-        const { cantidadRelojes, cantidadOtros } = clasificarProducto(datosCliente.producto || '');
-        datosCliente.cantidadRelojes = cantidadRelojes;
-        datosCliente.cantidadOtros = cantidadOtros;
+        const datosProducto = extraerListaProductos(bloqueTexto);
 
-        logger.info('AI', `Cliente: ${datosCliente.nombreCliente || 'N/A'} | ${datosCliente.producto || 'N/A'}`);
+        const datosCliente: DatosCliente = {
+            nombreCliente:  crudo.nombreCliente || 'N/A',
+            email:          crudo.email         || 'N/A',
+            telefono:       crudo.telefono      || 'N/A',
+            municipio:      crudo.municipio     || 'N/A',
+            vendedor:       crudo.vendedor      || 'N/A',
+            producto:       datosProducto.lineasProducto.join(', '),
+            cantidadRelojes: datosProducto.cantidadRelojes,
+            cantidadOtros:   datosProducto.cantidadOtros,
+        };
+
+        logger.info('AI', `Cliente: ${datosCliente.nombreCliente} | ${datosCliente.producto}`);
         return datosCliente;
 
     } catch (error) {

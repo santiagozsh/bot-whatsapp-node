@@ -34,7 +34,7 @@ export const initializeWhatsApp = () => {
             const chat = await msg.getChat();
 
             const gruposAutorizados = [
-                'Contabilidad| Empresa Luxury Gotti', // El de producción
+                // 'Contabilidad| Empresa Luxury Gotti', // El de producción
                 'Contabilidad'
             ];
 

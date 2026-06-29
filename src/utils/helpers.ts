@@ -102,3 +102,75 @@ export const normalizarTextoOCR = (texto: string): string => {
         .replace(/[''']/g, "'")
         .trim();
 };
+
+// 7. Clasificar tipo de transacción (Ingreso vs Abono) según cuenta y texto
+const CUENTAS_ABONO = ['3106131751', '3103455869', '03759053996'];
+const NOMBRES_ABONO = ['yenci', 'yenny', 'yazmin', 'ramirez'];
+const CUENTAS_INGRESO = ['3143527475', '3224442154', '3212267474'];
+
+export const clasificarTipoIngreso = (
+    cuentaDestino: string,
+    textoOCR: string
+): 'Ingreso' | 'Abono' => {
+    const cuenta = cuentaDestino.replace(/[\s.\-()]/g, '');
+    const texto = textoOCR.toLowerCase();
+
+    if (CUENTAS_INGRESO.some(c => cuenta.includes(c))) return 'Ingreso';
+
+    if (CUENTAS_ABONO.some(c => cuenta.includes(c))) return 'Abono';
+
+    if (NOMBRES_ABONO.some(n => texto.includes(n))) return 'Abono';
+
+    return 'Ingreso';
+};
+
+// 8. Extraer vendedor del contexto de WhatsApp con regex
+const VENDEDORES_CONOCIDOS = ['evelin', 'alejandra', 'aleja', 'karol', 'david'];
+const PATRON_VENDEDOR = /(?:venta|vendedor|vendido por)[:\s]+(\w+)/i;
+const STOP_WORDS = new Set(['en', 'de', 'del', 'la', 'el', 'que', 'con', 'sin', 'por', 'para', 'un', 'una', 'los', 'las', 'y', 'o', 'no', 'se', 'su', 'al', 'a', 'es', 'lo', 'le', 'me', 'te', 'tu', 'mi', 'mas', 'pero', 'como', 'ya', 'si', 'muy', 'todo', 'hay', 'nos', 'han', 'son', 'fue', 'era']);
+
+export const extraerVendedor = (contexto: string): string => {
+    const match = contexto.match(PATRON_VENDEDOR);
+    if (match && match[1]) {
+        const nombre = match[1].toLowerCase();
+
+        // Ignorar si capturó una palabra vacía de contenido (stop word)
+        if (STOP_WORDS.has(nombre) || nombre.length < 2) return 'JHON';
+
+        const conocido = VENDEDORES_CONOCIDOS.find(v => nombre.includes(v));
+        if (conocido) {
+            return conocido.charAt(0).toUpperCase() + conocido.slice(1);
+        }
+        return match[1].charAt(0).toUpperCase() + match[1].slice(1).toLowerCase();
+    }
+
+    return 'JHON';
+};
+
+// 9. Validar si un texto extraído por OCR es potencialmente útil o es basura
+const MIN_CHARS_UTILES = 8;
+const MAX_RATIO_TOKENS_CORTOS = 0.55;
+
+export const esTextoUtil = (texto: string): boolean => {
+    if (!texto || texto === 'SIN_TEXTO_DETECTADO') return false;
+
+    const limpio = texto.trim();
+
+    if (limpio.length < MIN_CHARS_UTILES) return false;
+
+    // Tokenizar: dividir por espacios y limpiar puntuación en bordes
+    const tokens = limpio
+        .split(/\s+/)
+        .map(t => t.replace(/^[^\wáéíóúüñÁÉÍÓÚÜÑ]+|[^\wáéíóúüñÁÉÍÓÚÜÑ]+$/g, ''))
+        .filter(t => t.length > 0);
+
+    if (tokens.length === 0) return false;
+
+    const tokensCortos = tokens.filter(t => t.length <= 2).length;
+    const ratioCortos = tokensCortos / tokens.length;
+
+    // OCR basura produce muchos tokens de 1-2 caracteres
+    if (ratioCortos > MAX_RATIO_TOKENS_CORTOS) return false;
+
+    return true;
+};

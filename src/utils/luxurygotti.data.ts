@@ -44,6 +44,15 @@ function parsearCantidadSegura(valor: string): number {
     return n;
 }
 
+function esPrecio(valor: string): boolean {
+    const numeroStr = valor.replace(/[.,]/g, '');
+    const n = parseInt(numeroStr, 10);
+    if (isNaN(n)) return false;
+    if (n > 999) return true;
+    if (/\d000/.test(numeroStr)) return true;
+    return false;
+}
+
 function extraerCantidad(item: string): { cantidad: number; textoLimpio: string } {
     const t = item.trim();
 
@@ -54,11 +63,13 @@ function extraerCantidad(item: string): { cantidad: number; textoLimpio: string 
 
     const leadingMult = t.match(/^(\d+)\s*[×xX]\s*(.+)/);
     if (leadingMult && leadingMult[1] && leadingMult[2]) {
+        if (esPrecio(leadingMult[1])) return { cantidad: 1, textoLimpio: t };
         return { cantidad: parsearCantidadSegura(leadingMult[1]), textoLimpio: leadingMult[2].trim() };
     }
 
     const leadingQty = t.match(/^(\d+)\s+(.+)/);
     if (leadingQty && leadingQty[1] && leadingQty[2]) {
+        if (esPrecio(leadingQty[1])) return { cantidad: 1, textoLimpio: t };
         return { cantidad: parsearCantidadSegura(leadingQty[1]), textoLimpio: leadingQty[2].trim() };
     }
 
@@ -80,10 +91,14 @@ function contieneMarcaReloj(normalizado: string): boolean {
     return false;
 }
 
-function clasificarItem(item: string): { esReloj: boolean; cantidad: number } {
+function clasificarItem(item: string): { esReloj: boolean; cantidad: number } | null {
     const { cantidad, textoLimpio } = extraerCantidad(item);
     const normalizado = normalizarTexto(textoLimpio);
     const palabras = normalizado.split(/\s+/);
+
+    // Si el item es puro precio sin marca/producto → no es producto
+    const itemLimpio = item.trim();
+    if (/^\d[\d.,]*$/.test(itemLimpio)) return null;
 
     const coincideConOtros = palabras.some(p => KEYWORDS_OTROS.has(p));
     if (coincideConOtros) {
@@ -91,11 +106,6 @@ function clasificarItem(item: string): { esReloj: boolean; cantidad: number } {
     }
 
     if (contieneMarcaReloj(normalizado)) {
-        return { esReloj: true, cantidad };
-    }
-
-    const coincideConReloj = palabras.some(p => KEYWORDS_RELOJ.has(p));
-    if (coincideConReloj) {
         return { esReloj: true, cantidad };
     }
 
@@ -108,7 +118,12 @@ function clasificarItem(item: string): { esReloj: boolean; cantidad: number } {
         return { esReloj: true, cantidad: 1 };
     }
 
-    return { esReloj: false, cantidad };
+    const coincideConReloj = palabras.some(p => KEYWORDS_RELOJ.has(p));
+    if (coincideConReloj) {
+        return { esReloj: true, cantidad };
+    }
+
+    return null;
 }
 
 export function clasificarProducto(producto: string): { cantidadRelojes: number; cantidadOtros: number } {
@@ -121,7 +136,9 @@ export function clasificarProducto(producto: string): { cantidadRelojes: number;
     let cantidadOtros = 0;
 
     for (const item of items) {
-        const { esReloj, cantidad } = clasificarItem(item);
+        const resultado = clasificarItem(item);
+        if (!resultado) continue;
+        const { esReloj, cantidad } = resultado;
         if (esReloj) {
             cantidadRelojes += cantidad;
         } else {
@@ -130,4 +147,37 @@ export function clasificarProducto(producto: string): { cantidadRelojes: number;
     }
 
     return { cantidadRelojes, cantidadOtros };
+}
+
+export interface DatosProducto {
+    lineasProducto: string[];
+    cantidadRelojes: number;
+    cantidadOtros: number;
+}
+
+export function extraerListaProductos(textoCrudo: string): DatosProducto {
+    if (!textoCrudo || textoCrudo.trim() === '') {
+        return { lineasProducto: [], cantidadRelojes: 0, cantidadOtros: 0 };
+    }
+
+    const lineas = textoCrudo.split('\n').flatMap(linea => linea.split(','));
+    const items = lineas.map(i => i.trim()).filter(Boolean);
+
+    let cantidadRelojes = 0;
+    let cantidadOtros = 0;
+    const lineasProducto: string[] = [];
+
+    for (const item of items) {
+        const resultado = clasificarItem(item);
+        if (!resultado) continue;
+        const { esReloj, cantidad } = resultado;
+        if (esReloj) {
+            cantidadRelojes += cantidad;
+        } else {
+            cantidadOtros += cantidad;
+        }
+        lineasProducto.push(item);
+    }
+
+    return { lineasProducto, cantidadRelojes, cantidadOtros };
 }

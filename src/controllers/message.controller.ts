@@ -1,12 +1,16 @@
-import { Message } from 'whatsapp-web.js';
+import { Message, Chat, MessageMedia } from 'whatsapp-web.js';
 import { extraerDatosDesdeTextoOCR, extraerDatosCliente, optimizarImagenParaOCR } from '../services/ai.service';
 import { escribirFilaEnExcel, escribirFilaVenta, mergeFilaVenta, escribirAbonoEnComprasMercancia, actualizarFilaIngreso } from '../services/sheets.service';
 import { guardarTransaccion, actualizarFilaVenta, buscarTransaccion, buscarTransaccionPorReferencia, buscarTransaccionPorNPedido } from '../services/memory.service';
-import { extraerTextoConVision } from '../services/vision.service';
-import { formatearFecha, normalizarTextoOCR } from '../utils/helpers';
+import { extraerTextoConVisionMejorado } from '../services/vision.service';
+import { formatearFecha, normalizarTextoOCR, esTextoUtil } from '../utils/helpers';
 import { logger } from '../utils/logger';
+import type { DatosIngreso } from '../types';
 
-const TIEMPO_VENTANA = parseInt(process.env.TIEMPO_VENTANA_ACTIVA || '60000');
+// ── Constantes ────────────────────────────────────────────────
+
+const TIEMPO_TTL_CONTEXTO = parseInt(process.env.TIEMPO_TTL_CONTEXTO || '14400000'); // 4 horas
+const TIEMPO_CIERRE_RESPALDO = parseInt(process.env.TIEMPO_CIERRE_RESPALDO || '14400000');
 
 const KEYWORDS_FINANCIEROS = [
     'nequi', 'bancolombia', 'davivienda', 'daviplata',
@@ -16,32 +20,68 @@ const KEYWORDS_FINANCIEROS = [
     'transaccion', 'transacción',
 ];
 
-interface VentanaActiva {
+// ── Tipos locales ─────────────────────────────────────────────
+
+interface ItemContexto {
+    texto: string;
+    timestamp: number;
+}
+
+interface TransaccionPendiente {
     nPedido: string;
     messageId: string;
-    fechaTransaccion: string;
-    textos: string[];
-    timer: NodeJS.Timeout;
+    fecha: string;
 }
 
-const ventanasActivas = new Map<string, VentanaActiva>();
-const bufferTextosPorChat = new Map<string, string[]>();
-const chatsEnProceso = new Set<string>();
-const textosPendientesPorChat = new Map<string, string[]>();
+// ── Estado del chat ──────────────────────────────────────────
 
-function getBuffer(chatId: string): string[] {
-    if (!bufferTextosPorChat.has(chatId)) {
-        bufferTextosPorChat.set(chatId, []);
+const contextoPorChat = new Map<string, ItemContexto[]>();
+const transaccionActualPorChat = new Map<string, TransaccionPendiente | null>();
+const colasPorChat = new Map<string, Promise<void>>();
+const timersRespaldoPorChat = new Map<string, NodeJS.Timeout>();
+
+// ── Helpers de contexto ──────────────────────────────────────
+
+function agregarAlContexto(chatId: string, texto: string): void {
+    if (!texto || texto === 'SIN_TEXTO_DETECTADO') return;
+
+    const ahora = Date.now();
+    const ttl = TIEMPO_TTL_CONTEXTO;
+
+    if (!contextoPorChat.has(chatId)) {
+        contextoPorChat.set(chatId, []);
     }
-    return bufferTextosPorChat.get(chatId)!;
+
+    const items = contextoPorChat.get(chatId)!;
+    const vigentes = items.filter(item => ahora - item.timestamp <= ttl);
+    vigentes.push({ texto, timestamp: ahora });
+    contextoPorChat.set(chatId, vigentes);
 }
 
-function getPendientes(chatId: string): string[] {
-    if (!textosPendientesPorChat.has(chatId)) {
-        textosPendientesPorChat.set(chatId, []);
-    }
-    return textosPendientesPorChat.get(chatId)!;
+function obtenerContexto(chatId: string): string {
+    const items = contextoPorChat.get(chatId);
+    if (!items || items.length === 0) return '';
+
+    const ahora = Date.now();
+    const ttl = TIEMPO_TTL_CONTEXTO;
+    const vigentes = items.filter(item => ahora - item.timestamp <= ttl);
+    contextoPorChat.set(chatId, vigentes);
+
+    return vigentes.map(item => item.texto).join('\n');
 }
+
+// ── Cola por chat (serialización de operaciones) ─────────────
+
+async function encolarOperacion(chatId: string, fn: () => Promise<void>): Promise<void> {
+    const anterior = colasPorChat.get(chatId) || Promise.resolve();
+    const actual = anterior.then(fn).catch(err => {
+        logger.error('COLA', `Error en operación de ${chatId}:`, err);
+    });
+    colasPorChat.set(chatId, actual);
+    await actual;
+}
+
+// ── Detección de comprobante ─────────────────────────────────
 
 function textoContieneDatosFinancieros(texto: string): boolean {
     if (!texto || texto === 'SIN_TEXTO_DETECTADO') return false;
@@ -54,24 +94,33 @@ function hoyStr(): string {
     return `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getFullYear()}`;
 }
 
-async function cerrarVentanaActiva(chatId: string, chat: any): Promise<void> {
-    const ventana = ventanasActivas.get(chatId);
-    if (!ventana) return;
-    ventanasActivas.delete(chatId);
-    clearTimeout(ventana.timer);
+// ── Cierre de transacción anterior (escribe Ventas) ──────────
 
-    if (ventana.textos.length === 0) return;
+async function finalizarTransaccionAnterior(chatId: string, chat: Chat): Promise<void> {
+    const transaccion = transaccionActualPorChat.get(chatId);
+    if (!transaccion) return;
 
-    logger.info('VENTANA', `Cerrando ventana de ${ventana.nPedido} (${ventana.textos.length} texto(s))`);
+    const contexto = obtenerContexto(chatId);
 
-    const datosCliente = await extraerDatosCliente(ventana.textos.join('\n'));
-    if (!datosCliente) return;
+    if (!contexto) {
+        contextoPorChat.delete(chatId);
+        transaccionActualPorChat.set(chatId, null);
+        return;
+    }
 
-    const transaccion = buscarTransaccion(ventana.messageId);
+    logger.info('CIERRE', `Finalizando Ventas de ${transaccion.nPedido} (${contexto.split('\n').length} ítem(s) en contexto)`);
 
-    // Update vendedor in Ingresos if present
-    if (datosCliente.vendedor && datosCliente.vendedor !== 'N/A' && transaccion) {
-        await actualizarFilaIngreso(transaccion.filaIngreso, { vendedor: datosCliente.vendedor });
+    const datosCliente = await extraerDatosCliente(contexto);
+    if (!datosCliente) {
+        contextoPorChat.delete(chatId);
+        transaccionActualPorChat.set(chatId, null);
+        return;
+    }
+
+    const t = buscarTransaccion(transaccion.messageId);
+
+    if (datosCliente.vendedor && datosCliente.vendedor !== 'N/A' && t) {
+        await actualizarFilaIngreso(t.filaIngreso, { vendedor: datosCliente.vendedor });
     }
 
     const tieneProductos = datosCliente.producto && datosCliente.producto !== 'N/A';
@@ -79,91 +128,115 @@ async function cerrarVentanaActiva(chatId: string, chat: any): Promise<void> {
     const tieneNombre = datosCliente.nombreCliente && datosCliente.nombreCliente !== 'N/A';
 
     if (!tieneProductos && !tieneCantidades && !tieneNombre) {
-        logger.info('VENTANA', 'Sin datos útiles, pasando al buffer');
-        getBuffer(chatId).push(...ventana.textos);
+        logger.info('CIERRE', 'Sin datos útiles para Ventas');
+        contextoPorChat.delete(chatId);
+        transaccionActualPorChat.set(chatId, null);
         return;
     }
 
-    if (!transaccion) return;
+    if (!t) {
+        contextoPorChat.delete(chatId);
+        transaccionActualPorChat.set(chatId, null);
+        return;
+    }
 
-    const fecha = formatearFecha(ventana.fechaTransaccion);
+    const fecha = formatearFecha(transaccion.fecha);
 
-    if (transaccion.filaVenta === null) {
-        const filaVenta = await escribirFilaVenta(datosCliente, ventana.nPedido, fecha);
+    if (t.filaVenta === null) {
+        const filaVenta = await escribirFilaVenta(datosCliente, transaccion.nPedido, fecha);
         if (filaVenta > 0) {
-            actualizarFilaVenta(ventana.messageId, filaVenta);
+            actualizarFilaVenta(transaccion.messageId, filaVenta);
         }
     } else {
-        await mergeFilaVenta(transaccion.filaVenta, datosCliente);
+        await mergeFilaVenta(t.filaVenta, datosCliente);
     }
+
+    contextoPorChat.delete(chatId);
+    transaccionActualPorChat.set(chatId, null);
 }
 
-function abrirVentanaActiva(chatId: string, nPedido: string, messageId: string, fechaTransaccion: string, chat: any, textosIniciales: string[] = []): void {
+// ── Timer de respaldo ────────────────────────────────────────
+
+function programarCierreRespaldo(chatId: string, chat: Chat): void {
+    const existente = timersRespaldoPorChat.get(chatId);
+    if (existente) clearTimeout(existente);
+
     const timer = setTimeout(async () => {
-        await cerrarVentanaActiva(chatId, chat);
-    }, TIEMPO_VENTANA);
+        timersRespaldoPorChat.delete(chatId);
+        await encolarOperacion(chatId, async () => {
+            if (transaccionActualPorChat.get(chatId)) {
+                logger.info('RESPALDO', `Cierre por inactividad (${TIEMPO_CIERRE_RESPALDO / 1000 / 60 / 60}h)`);
+                await finalizarTransaccionAnterior(chatId, chat);
+            }
+        });
+    }, TIEMPO_CIERRE_RESPALDO);
 
-    ventanasActivas.set(chatId, { nPedido, messageId, fechaTransaccion, textos: [...textosIniciales], timer });
-    if (textosIniciales.length > 0) {
-        logger.info('VENTANA', `Ventana ${nPedido} abierta con ${textosIniciales.length} texto(s) del buffer`);
-    }
+    timersRespaldoPorChat.set(chatId, timer);
 }
 
-function extenderVentana(chatId: string, chat: any): void {
-    const v = ventanasActivas.get(chatId);
-    if (!v) return;
-    clearTimeout(v.timer);
-    v.timer = setTimeout(async () => {
-        await cerrarVentanaActiva(chatId, chat);
-    }, TIEMPO_VENTANA);
-}
+// ── Pipeline de comprobante ──────────────────────────────────
 
-async function procesarImagen(media: any, msg: Message, chat: any, chatId: string): Promise<void> {
-    logger.info('IMAGEN', 'Procesando imagen...');
-
+async function preprocesarImagen(media: MessageMedia): Promise<string> {
     const imgOptimizada = await optimizarImagenParaOCR(media.data);
-    const textoOCR = normalizarTextoOCR(await extraerTextoConVision(imgOptimizada));
+    return normalizarTextoOCR(await extraerTextoConVisionMejorado(imgOptimizada));
+}
 
-    if (!textoContieneDatosFinancieros(textoOCR)) {
+function procesarImagenNoComprobante(chatId: string, textoOCR: string): void {
+    if (textoOCR && textoOCR !== 'SIN_TEXTO_DETECTADO' && esTextoUtil(textoOCR)) {
+        agregarAlContexto(chatId, textoOCR);
+        logger.info('IMAGEN', `Sin datos financieros → acumulada en contexto (${textoOCR.length} chars)`);
+    } else {
         logger.info('IMAGEN', 'Sin datos financieros — descartada (0 tokens)');
-        return;
     }
+}
 
+async function procesarComprobante(
+    textoOCR: string,
+    msg: Message,
+    chat: Chat,
+    chatId: string
+): Promise<void> {
     logger.info('IMAGEN', 'Datos financieros detectados → OpenAI');
-    chatsEnProceso.add(chatId);
 
+    // 1. Cerrar la transacción anterior
+    await finalizarTransaccionAnterior(chatId, chat);
+
+    // 2. Obtener contexto para Prompt A
+    const contextoParaPromptA = obtenerContexto(chatId);
     const MAX_CONTEXTO_CHARS = 300;
-    const buffer = getBuffer(chatId);
-    const bufferSnapshot = [...buffer];
-    const rawContexto = buffer.length > 0 ? buffer.join('\n') : '';
-    const contextoTexto = rawContexto.length > MAX_CONTEXTO_CHARS
-        ? rawContexto.substring(0, MAX_CONTEXTO_CHARS) + '...'
-        : (rawContexto || 'No hay contexto de texto para esta imagen.');
+    const contextoTruncado = contextoParaPromptA.length > MAX_CONTEXTO_CHARS
+        ? contextoParaPromptA.substring(0, MAX_CONTEXTO_CHARS) + '...'
+        : (contextoParaPromptA || 'No hay contexto de texto para esta imagen.');
 
-    await cerrarVentanaActiva(chatId, chat);
-
-    const datosExtraidos = await extraerDatosDesdeTextoOCR(textoOCR, contextoTexto);
+    // 3. Extraer datos del comprobante con OpenAI
+    const datosExtraidos = await extraerDatosDesdeTextoOCR(textoOCR, contextoTruncado);
 
     if (!datosExtraidos || !datosExtraidos.esComprobanteValido) {
-        chatsEnProceso.delete(chatId);
         logger.info('IMAGEN', 'No es comprobante válido');
         return;
     }
 
+    // 4. Verificar duplicado por referencia
     if (datosExtraidos.referenciaDePago && datosExtraidos.referenciaDePago !== 'N/A') {
         const existente = buscarTransaccionPorReferencia(datosExtraidos.referenciaDePago);
         if (existente) {
-            chatsEnProceso.delete(chatId);
             logger.info('IMAGEN', `Referencia duplicada: ${datosExtraidos.referenciaDePago} = ${existente.nPedido}`);
             return;
         }
     }
 
-    buffer.length = 0;
+    // 5. Registrar comprobante
+    await registrarComprobante(datosExtraidos, msg, chat, chatId);
+}
 
+async function registrarComprobante(
+    datosExtraidos: DatosIngreso,
+    msg: Message,
+    chat: Chat,
+    chatId: string
+): Promise<void> {
     const resultado = await escribirFilaEnExcel(datosExtraidos);
     if (!resultado) {
-        chatsEnProceso.delete(chatId);
         logger.error('IMAGEN', 'Error escribiendo en Google Sheets');
         return;
     }
@@ -172,37 +245,42 @@ async function procesarImagen(media: any, msg: Message, chat: any, chatId: strin
 
     guardarTransaccion(msg.id._serialized, nPedido, filaIngreso, datosExtraidos.referenciaDePago || null);
 
-    abrirVentanaActiva(chatId, nPedido, msg.id._serialized, datosExtraidos.fecha, chat, bufferSnapshot);
-    chatsEnProceso.delete(chatId);
-
-    const pendientes = textosPendientesPorChat.get(chatId);
-    if (pendientes && pendientes.length > 0) {
-        const ventana = ventanasActivas.get(chatId);
-        if (ventana) {
-            ventana.textos.push(...pendientes);
-            logger.info('VENTANA', `+${pendientes.length} texto(s) pendientes agregados a ${nPedido}`);
-        }
-        textosPendientesPorChat.delete(chatId);
-    }
+    transaccionActualPorChat.set(chatId, { nPedido, messageId: msg.id._serialized, fecha: datosExtraidos.fecha });
 
     if (datosExtraidos.tipo === 'Abono') {
         await escribirAbonoEnComprasMercancia(datosExtraidos.fecha, datosExtraidos.precioCompra);
     }
 
+    programarCierreRespaldo(chatId, chat);
+
     logger.info('IMAGEN', `✅ ${nPedido} registrado (fila ${filaIngreso})`);
 }
 
-async function procesarTextoConReply(msg: Message, chat: any, chatId: string): Promise<void> {
-    const mensajeCitado = await msg.getQuotedMessage();
-    const quotedId = mensajeCitado.id._serialized;
+async function procesarImagen(media: MessageMedia, msg: Message, chat: Chat, chatId: string): Promise<void> {
+    logger.info('IMAGEN', 'Procesando imagen...');
 
-    const ventana = ventanasActivas.get(chatId);
-    if (ventana && ventana.messageId === quotedId) {
-        ventana.textos.push(msg.body);
-        logger.info('REPLY', `Asociado a ventana activa ${ventana.nPedido}`);
-        extenderVentana(chatId, chat);
+    const textoOCR = await preprocesarImagen(media);
+
+    if (!textoContieneDatosFinancieros(textoOCR)) {
+        procesarImagenNoComprobante(chatId, textoOCR);
         return;
     }
+
+    await procesarComprobante(textoOCR, msg, chat, chatId);
+}
+
+// ── Procesamiento de texto (sin reply) ───────────────────────
+
+async function procesarTextoSinReply(msg: Message, chatId: string): Promise<void> {
+    agregarAlContexto(chatId, msg.body);
+    logger.info('TEXTO', `→ contexto: "${msg.body.substring(0, 50)}..."`);
+}
+
+// ── Procesamiento de texto (con reply) ───────────────────────
+
+async function procesarTextoConReply(msg: Message, chat: Chat, chatId: string): Promise<void> {
+    const mensajeCitado = await msg.getQuotedMessage();
+    const quotedId = mensajeCitado.id._serialized;
 
     const patronCorreccion = /^(tipo|vendedor):\s*(.+)$/i;
     const matchCorreccion = msg.body.match(patronCorreccion);
@@ -248,56 +326,44 @@ async function procesarTextoConReply(msg: Message, chat: any, chatId: string): P
         return;
     }
 
-    logger.info('REPLY', 'Sin transacción conocida → buffer');
-    getBuffer(chatId).push(msg.body);
+    logger.info('REPLY', 'Sin transacción conocida → contexto');
+    agregarAlContexto(chatId, msg.body);
 }
 
-async function procesarTextoSinReply(msg: Message, chat: any, chatId: string): Promise<void> {
-    const ventana = ventanasActivas.get(chatId);
-
-    if (ventana) {
-        ventana.textos.push(msg.body);
-        logger.info('TEXTO', `→ ventana ${ventana.nPedido}: "${msg.body.substring(0, 50)}..."`);
-        extenderVentana(chatId, chat);
-    } else if (chatsEnProceso.has(chatId)) {
-        getPendientes(chatId).push(msg.body);
-        logger.info('TEXTO', `→ pendiente (procesando imagen): "${msg.body.substring(0, 50)}..."`);
-    } else {
-        getBuffer(chatId).push(msg.body);
-        logger.info('TEXTO', `→ buffer: "${msg.body.substring(0, 50)}..."`);
-    }
-}
+// ── Entrada principal ────────────────────────────────────────
 
 export const procesarMensajeEntrante = async (msg: Message) => {
     const chat = await msg.getChat();
     const chatId = chat.id._serialized;
 
-    if (msg.hasMedia) {
-        if (msg.type === 'sticker' || msg.type === 'video' || msg.type === 'audio' || msg.type === 'ptt') {
-            return;
-        }
-
-        const media = await msg.downloadMedia();
-        if (!media || !media.mimetype.includes('image') || media.mimetype.includes('webp')) {
-            return;
-        }
-
-        if (msg.hasQuotedMsg) {
-            const mensajeCitado = await msg.getQuotedMessage();
-            const transaccion = buscarTransaccion(mensajeCitado.id._serialized);
-            if (transaccion) {
-                logger.info('REPLY', `Imagen reply descartada para ${transaccion.nPedido}`);
+    await encolarOperacion(chatId, async () => {
+        if (msg.hasMedia) {
+            if (msg.type === 'sticker' || msg.type === 'video' || msg.type === 'audio' || msg.type === 'ptt') {
                 return;
             }
-        }
 
-        await procesarImagen(media, msg, chat, chatId);
+            const media = await msg.downloadMedia();
+            if (!media || !media.mimetype.includes('image') || media.mimetype.includes('webp')) {
+                return;
+            }
 
-    } else if (msg.body) {
-        if (msg.hasQuotedMsg) {
-            await procesarTextoConReply(msg, chat, chatId);
-        } else {
-            await procesarTextoSinReply(msg, chat, chatId);
+            if (msg.hasQuotedMsg) {
+                const mensajeCitado = await msg.getQuotedMessage();
+                const transaccion = buscarTransaccion(mensajeCitado.id._serialized);
+                if (transaccion) {
+                    logger.info('REPLY', `Imagen reply descartada para ${transaccion.nPedido}`);
+                    return;
+                }
+            }
+
+            await procesarImagen(media, msg, chat, chatId);
+
+        } else if (msg.body) {
+            if (msg.hasQuotedMsg) {
+                await procesarTextoConReply(msg, chat, chatId);
+            } else {
+                await procesarTextoSinReply(msg, chatId);
+            }
         }
-    }
+    });
 };

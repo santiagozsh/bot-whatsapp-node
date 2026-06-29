@@ -50,3 +50,84 @@ export const extraerTextoConVision = async (
         throw error;
     }
 };
+
+// ── TrOCR pipeline (lazy init, se descarga una sola vez) ───────
+
+let trocrPipeline: any = null;
+let trocrCargando = false;
+
+async function obtenerTrOCR(): Promise<any | null> {
+    if (trocrPipeline) return trocrPipeline;
+    if (trocrCargando) return null;
+
+    try {
+        trocrCargando = true;
+        logger.info('TrOCR', 'Cargando modelo microsoft/trocr-base-handwritten...');
+
+        // Dynamic import para no cargar transformers si nunca se necesita
+        const { pipeline } = await import('@xenova/transformers');
+        trocrPipeline = await pipeline('image-to-text', 'Xenova/trocr-base-handwritten');
+
+        logger.info('TrOCR', 'Modelo cargado correctamente');
+        return trocrPipeline;
+    } catch (error) {
+        logger.error('TrOCR', 'Error cargando modelo:', error);
+        return null;
+    } finally {
+        trocrCargando = false;
+    }
+}
+
+// ── OCR mejorado: Tesseract → TrOCR fallback ──────────────────
+
+const UMBRAL_TEXTO_CORTO = 10; // caracteres mínimos para confiar en Tesseract
+
+/**
+ * Extrae texto de una imagen con estrategia en cascada:
+ * 1. Tesseract primero (rápido, bueno para texto impreso y capturas de pantalla)
+ * 2. Si Tesseract falla (texto vacío o muy corto) → TrOCR (especializado en manuscrita)
+ * 3. Si TrOCR también falla → retornar cadena vacía (se descarta, 0 tokens)
+ *
+ * @param imagenBase64 - Imagen en base64 ya optimizada (Sharp)
+ */
+export const extraerTextoConVisionMejorado = async (
+    imagenBase64: string
+): Promise<string> => {
+    try {
+        // Paso 1: Tesseract
+        const textoTesseract = await extraerTextoConVision(imagenBase64);
+
+        const esTextoValido = textoTesseract
+            && textoTesseract !== 'SIN_TEXTO_DETECTADO'
+            && textoTesseract.length >= UMBRAL_TEXTO_CORTO;
+
+        if (esTextoValido) {
+            return textoTesseract;
+        }
+
+        // Paso 2: Tesseract falló → intentar TrOCR
+        logger.info('TrOCR', `Tesseract obtuvo texto corto/vacío (${textoTesseract.length} chars). Intentando TrOCR...`);
+
+        const pipeline = await obtenerTrOCR();
+        if (!pipeline) {
+            logger.warn('TrOCR', 'Modelo no disponible, descartando imagen');
+            return '';
+        }
+
+        const buffer = Buffer.from(imagenBase64, 'base64');
+        const resultados = await pipeline(buffer);
+        const textoTrOCR = (resultados?.[0]?.generated_text || '').trim();
+
+        if (textoTrOCR && textoTrOCR.length >= UMBRAL_TEXTO_CORTO) {
+            logger.info('TrOCR', `Texto extraído (${textoTrOCR.length} caracteres).`);
+            return textoTrOCR;
+        }
+
+        logger.warn('TrOCR', 'Tampoco se detectó texto con TrOCR.');
+        return '';
+
+    } catch (error) {
+        logger.error('OCR', 'Error en OCR mejorado:', error);
+        return '';
+    }
+};

@@ -18,7 +18,3 @@ El agente debe detenerse y esperar aprobación explícita del usuario antes de e
 - Agregar comentarios o documentación sin cambiar lógica
 - Correr comandos de solo lectura (tsc --noEmit, cat, ls, etc.)
 
-### Formato del plan
-El agente debe presentar el plan en un artefacto `que_hare.md`
-usando la estructura estándar, incluyendo secciones de archivos afectados
-y plan de verificación.
