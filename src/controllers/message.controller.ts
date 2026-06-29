@@ -279,8 +279,54 @@ async function procesarTextoSinReply(msg: Message, chatId: string): Promise<void
 // ── Procesamiento de texto (con reply) ───────────────────────
 
 async function procesarTextoConReply(msg: Message, chat: Chat, chatId: string): Promise<void> {
-    const mensajeCitado = await msg.getQuotedMessage();
+    let mensajeCitado: Message;
+    try {
+        mensajeCitado = await msg.getQuotedMessage();
+        if (!mensajeCitado) {
+            logger.warn('REPLY', 'getQuotedMessage devolvió null → contexto');
+            agregarAlContexto(chatId, msg.body);
+            return;
+        }
+    } catch {
+        logger.warn('REPLY', 'No se pudo obtener el mensaje citado → contexto');
+        agregarAlContexto(chatId, msg.body);
+        return;
+    }
     const quotedId = mensajeCitado.id._serialized;
+
+    const transaccionActual = transaccionActualPorChat.get(chatId);
+    if (transaccionActual && transaccionActual.messageId === quotedId) {
+        agregarAlContexto(chatId, msg.body);
+        logger.info('REPLY', `Asociado a transacción activa ${transaccionActual.nPedido}`);
+
+        const datosCliente = await extraerDatosCliente(msg.body);
+        if (!datosCliente) return;
+
+        const t = buscarTransaccion(transaccionActual.messageId);
+        if (t && datosCliente.vendedor && datosCliente.vendedor !== 'N/A') {
+            await actualizarFilaIngreso(t.filaIngreso, { vendedor: datosCliente.vendedor });
+        }
+
+        const tieneProductos = datosCliente.producto && datosCliente.producto !== 'N/A';
+        const tieneCantidades = (datosCliente.cantidadRelojes ?? 0) > 0 || (datosCliente.cantidadOtros ?? 0) > 0;
+        const tieneNombre = datosCliente.nombreCliente && datosCliente.nombreCliente !== 'N/A';
+
+        if (!tieneProductos && !tieneCantidades && !tieneNombre) return;
+
+        if (!t) return;
+
+        const fecha = formatearFecha(transaccionActual.fecha);
+
+        if (t.filaVenta === null) {
+            const filaVenta = await escribirFilaVenta(datosCliente, transaccionActual.nPedido, fecha);
+            if (filaVenta > 0) {
+                actualizarFilaVenta(transaccionActual.messageId, filaVenta);
+            }
+        } else {
+            await mergeFilaVenta(t.filaVenta, datosCliente);
+        }
+        return;
+    }
 
     const patronCorreccion = /^(tipo|vendedor):\s*(.+)$/i;
     const matchCorreccion = msg.body.match(patronCorreccion);
@@ -295,6 +341,12 @@ async function procesarTextoConReply(msg: Message, chat: Chat, chatId: string): 
                 await actualizarFilaIngreso(t.filaIngreso, { [campo]: valor });
                 return;
             }
+        }
+
+        const t = buscarTransaccion(quotedId);
+        if (t) {
+            await actualizarFilaIngreso(t.filaIngreso, { [campo]: valor });
+            return;
         }
     }
 
