@@ -1,6 +1,6 @@
 import { Message, Chat, MessageMedia } from 'whatsapp-web.js';
 import { extraerDatosDesdeTextoOCR, extraerDatosCliente, optimizarImagenParaOCR } from '../services/ai.service';
-import { escribirFilaEnExcel, escribirFilaVenta, mergeFilaVenta, escribirAbonoEnComprasMercancia, actualizarFilaIngreso } from '../services/sheets.service';
+import { escribirFilaEnExcel, escribirFilaVenta, mergeFilaVenta, actualizarFilaIngreso } from '../services/sheets.service';
 import { guardarTransaccion, actualizarFilaVenta, buscarTransaccion, buscarTransaccionPorReferencia, buscarTransaccionPorNPedido } from '../services/memory.service';
 import { extraerTextoConVisionMejorado } from '../services/vision.service';
 import { formatearFecha, normalizarTextoOCR, esTextoUtil } from '../utils/helpers';
@@ -246,10 +246,6 @@ async function registrarComprobante(
     guardarTransaccion(msg.id._serialized, nPedido, filaIngreso, datosExtraidos.referenciaDePago || null);
 
     transaccionActualPorChat.set(chatId, { nPedido, messageId: msg.id._serialized, fecha: datosExtraidos.fecha });
-
-    if (datosExtraidos.tipo === 'Abono') {
-        await escribirAbonoEnComprasMercancia(datosExtraidos.fecha, datosExtraidos.precioCompra);
-    }
 
     programarCierreRespaldo(chatId, chat);
 
