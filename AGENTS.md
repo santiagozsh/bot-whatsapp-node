@@ -18,3 +18,7 @@ El agente debe detenerse y esperar aprobación explícita del usuario antes de e
 - Agregar comentarios o documentación sin cambiar lógica
 - Correr comandos de solo lectura (tsc --noEmit, cat, ls, etc.)
 
+## Documentación oficial
+
+Cuando necesites consultar la documentación oficial de OpenAI u otra librería, usa las herramientas de `context7`.
+
