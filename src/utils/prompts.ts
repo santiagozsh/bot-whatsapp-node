@@ -1,7 +1,11 @@
 // src/utils/prompts.ts
-export const construirPromptContable = (contextoWhatsApp: string, textoOCR: string): string => {
-return `Analista contable. Extrae datos del comprobante.
+export const construirPromptContable = (contextoWhatsApp: string, textoOCR: string, bancoPorColor?: string): string => {
+const hintBanco = bancoPorColor
+    ? `\nBANCO DETECTADO VISUALMENTE: ${bancoPorColor}. Usa este valor como medioDePago.\n`
+    : '';
 
+return `Analista contable. Extrae datos del comprobante.
+${hintBanco}
 OCR:
 ${textoOCR}
 
@@ -13,7 +17,7 @@ FILTRO: Si no es transferencia (Nequi, Bancolombia, Davivienda, Daviplata) → {
 EXTRAER:
 - fecha: DD/MM/YYYY
 - precioCompra: string sin símbolos (ej "165000")
-- medioDePago: banco del OCR (Nequi, Bancolombia, etc.)
+- medioDePago: banco o billetera que EMITE el comprobante. ATENCIÓN: el OCR puede mencionar "Nequi" como texto promocional de otros bancos ("transferencias a Nequi"). Ignora esas menciones y determina quién EMITE realmente el comprobante. Si no puedes determinarlo → "No identificado".
 - referenciaDePago: n° de referencia, No.Comprobante, No.Aprob
 - cuentaDestino: cuenta destino (10 dígitos)
 - descripcion: ""Pedido al por menor" ponlo por defecto"

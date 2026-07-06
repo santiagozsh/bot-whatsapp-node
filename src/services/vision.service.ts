@@ -1,6 +1,10 @@
 import Tesseract from 'tesseract.js';
 import { logger } from '../utils/logger';
 
+interface TrOCRPipeline {
+    (input: string | Buffer): Promise<Array<{ generated_text: string }>>;
+}
+
 type ModoOCR = 'comprobante' | 'formulario';
 
 /**
@@ -53,10 +57,10 @@ export const extraerTextoConVision = async (
 
 // ── TrOCR pipeline (lazy init, se descarga una sola vez) ───────
 
-let trocrPipeline: any = null;
+let trocrPipeline: TrOCRPipeline | null = null;
 let trocrCargando = false;
 
-async function obtenerTrOCR(): Promise<any | null> {
+async function obtenerTrOCR(): Promise<TrOCRPipeline | null> {
     if (trocrPipeline) return trocrPipeline;
     if (trocrCargando) return null;
 
@@ -66,7 +70,7 @@ async function obtenerTrOCR(): Promise<any | null> {
 
         // Dynamic import para no cargar transformers si nunca se necesita
         const { pipeline } = await import('@xenova/transformers');
-        trocrPipeline = await pipeline('image-to-text', 'Xenova/trocr-base-handwritten');
+        trocrPipeline = await pipeline('image-to-text', 'Xenova/trocr-base-handwritten') as TrOCRPipeline;
 
         logger.info('TrOCR', 'Modelo cargado correctamente');
         return trocrPipeline;

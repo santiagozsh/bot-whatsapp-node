@@ -87,3 +87,25 @@ export function actualizarFilaVenta(messageId: string, filaVenta: number): void 
     db.prepare(`UPDATE historial_transacciones SET filaVenta = ? WHERE messageId = ?`).run(filaVenta, messageId);
     logger.info('DB', `filaVenta=${filaVenta} para messageId=${messageId}`);
 }
+
+export function generarSiguienteNPedido(): string {
+    db.exec(`
+        CREATE TABLE IF NOT EXISTS secuencia_pedidos (
+            id    INTEGER PRIMARY KEY CHECK (id = 1),
+            valor INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT OR IGNORE INTO secuencia_pedidos (id, valor) VALUES (1, 0);
+    `);
+
+    const row = db.prepare(`
+        UPDATE secuencia_pedidos SET valor = valor + 1 WHERE id = 1
+        RETURNING valor
+    `).get() as { valor: number };
+
+    return `LG-${String(row.valor).padStart(2, '0')}`;
+}
+
+export function cerrarDB(): void {
+    db.close();
+    logger.info('DB', 'SQLite cerrada correctamente');
+}

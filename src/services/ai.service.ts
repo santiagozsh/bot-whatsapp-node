@@ -49,12 +49,14 @@ interface DatosOCRBrutos {
  */
 export const extraerDatosDesdeTextoOCR = async (
     textoOCR: string,
-    contextoTexto: string
+    contextoTexto: string,
+    bancoPorColor?: string
 ): Promise<DatosIngreso | undefined> => {
     try {
         const openaiModel = process.env.OPENAI_MODEL || 'gpt-4o-mini';
-        const prompt = construirPromptContable(contextoTexto, textoOCR);
+        const prompt = construirPromptContable(contextoTexto, textoOCR, bancoPorColor);
 
+        if (bancoPorColor) logger.info('AI', `Banco por color: ${bancoPorColor}`);
         logger.info('AI', 'Enviando texto a OpenAI (Prompt A — contable)...');
 
         const resultado = await ejecutarConRetry(() => openai.chat.completions.create({
@@ -79,7 +81,7 @@ export const extraerDatosDesdeTextoOCR = async (
 
         const medioDePago = tipo === 'Abono'
             ? 'Nequi bodega'
-            : (crudo.medioDePago || 'Nequi');
+            : bancoPorColor || crudo.medioDePago || 'No detectado';
 
         return {
             esComprobanteValido: true,

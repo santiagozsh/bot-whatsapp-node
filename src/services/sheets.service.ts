@@ -1,7 +1,8 @@
 import { google } from 'googleapis';
 import * as path from 'path';
 import * as dotenv from 'dotenv';
-import { formatearFecha, formatearCuenta, generarSiguienteId } from '../utils/helpers';
+import { formatearFecha, formatearCuenta } from '../utils/helpers';
+import { generarSiguienteNPedido } from './memory.service';
 import { obtenerDepartamento } from '../utils/colombia.data';
 import { logger } from '../utils/logger';
 import type { DatosIngreso, DatosCliente, DatosIngresoParcial } from '../types';
@@ -10,6 +11,8 @@ dotenv.config();
 
 const SPREADSHEET_ID = process.env.GOOGLE_SHEETS_ID as string;
 
+let sheetsClientPromise: ReturnType<typeof inicializarGoogleSheets> | null = null;
+
 const inicializarGoogleSheets = async () => {
     const auth = new google.auth.GoogleAuth({
         keyFile: path.join(__dirname, '../../google-keys.json'),
@@ -17,28 +20,33 @@ const inicializarGoogleSheets = async () => {
     });
 
     const cliente = await auth.getClient();
+    // googleapis-common bundles its own google-auth-library version,
+    // causing TS to reject type assertion to a narrower type. `any` is the pragmatic cast.
     return google.sheets({ version: 'v4', auth: cliente as any });
+};
+
+const obtenerSheets = async () => {
+    if (!sheetsClientPromise) {
+        sheetsClientPromise = inicializarGoogleSheets();
+        logger.info('SHEETS', 'Cliente de Google Sheets inicializado (singleton)');
+    }
+    return sheetsClientPromise;
 };
 
 export const escribirFilaEnExcel = async (datosJSON: DatosIngreso): Promise<{ nPedido: string; filaIngreso: number } | null> => {
     try {
-        const sheets = await inicializarGoogleSheets();
+        const sheets = await obtenerSheets();
 
-        logger.info('SHEETS', 'Leyendo columna A para calcular N.Pedido...');
+        const nuevoId = generarSiguienteNPedido();
+
+        logger.info('SHEETS', 'Leyendo columna A para calcular fila destino...');
         const response = await sheets.spreadsheets.values.get({
             spreadsheetId: SPREADSHEET_ID,
             range: 'Ingresos transacciones!A:A',
         });
 
         const filas = response.data.values;
-        let ultimoId = 'LG-00';
         const filaIngreso = (filas?.length || 0) + 1;
-
-        if (filas && filas.length > 0) {
-            ultimoId = filas[filas.length - 1]?.[0] || 'LG-00';
-        }
-
-        const nuevoId = generarSiguienteId(ultimoId);
         const fechaLimpia = formatearFecha(datosJSON.fecha);
         const cuentaLimpia = formatearCuenta(datosJSON.cuentaDestino);
 
@@ -77,7 +85,7 @@ export const escribirFilaVenta = async (
     fecha: string
 ): Promise<number> => {
     try {
-        const sheets = await inicializarGoogleSheets();
+        const sheets = await obtenerSheets();
         const hojaVentas = process.env.SHEETS_VENTAS_NOMBRE || 'Ventas';
 
         const lecturaActual = await sheets.spreadsheets.values.get({
@@ -126,7 +134,7 @@ export const mergeFilaVenta = async (
     datosNuevos: DatosCliente
 ): Promise<void> => {
     try {
-        const sheets = await inicializarGoogleSheets();
+        const sheets = await obtenerSheets();
         const hojaVentas = process.env.SHEETS_VENTAS_NOMBRE || 'Ventas';
 
         const lecturaActual = await sheets.spreadsheets.values.get({
@@ -176,7 +184,7 @@ export const actualizarFilaIngreso = async (
     campos: DatosIngresoParcial
 ): Promise<void> => {
     try {
-        const sheets = await inicializarGoogleSheets();
+        const sheets = await obtenerSheets();
 
         const mapColumnas: Record<string, string> = {
             tipo:     'C',

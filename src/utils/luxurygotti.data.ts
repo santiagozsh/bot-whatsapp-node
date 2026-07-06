@@ -1,4 +1,5 @@
 import { normalizarTexto } from './helpers';
+import type { DatosProducto } from '../types';
 
 const MARCAS_RELOJ: Set<string> = new Set([
     "CSO", "CASIO",
@@ -147,12 +148,6 @@ export function clasificarProducto(producto: string): { cantidadRelojes: number;
     }
 
     return { cantidadRelojes, cantidadOtros };
-}
-
-export interface DatosProducto {
-    lineasProducto: string[];
-    cantidadRelojes: number;
-    cantidadOtros: number;
 }
 
 export function extraerListaProductos(textoCrudo: string): DatosProducto {

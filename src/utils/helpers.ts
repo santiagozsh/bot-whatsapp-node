@@ -1,4 +1,6 @@
+import sharp from 'sharp';
 import { logger } from './logger';
+import { CUENTAS_ABONO, NOMBRES_ABONO, CUENTAS_INGRESO, VENDEDORES_CONOCIDOS } from './config.data';
 
 // 1. Generar el identificador único en cascada
 export const generarSiguienteId = (ultimoId: string): string => {
@@ -104,10 +106,6 @@ export const normalizarTextoOCR = (texto: string): string => {
 };
 
 // 7. Clasificar tipo de transacción (Ingreso vs Abono) según cuenta y texto
-const CUENTAS_ABONO = ['3106131751', '3103455869', '03759053996'];
-const NOMBRES_ABONO = ['yenci', 'yenny', 'yazmin', 'ramirez'];
-const CUENTAS_INGRESO = ['3143527475', '3224442154', '3212267474'];
-
 export const clasificarTipoIngreso = (
     cuentaDestino: string,
     textoOCR: string
@@ -125,7 +123,6 @@ export const clasificarTipoIngreso = (
 };
 
 // 8. Extraer vendedor del contexto de WhatsApp con regex
-const VENDEDORES_CONOCIDOS = ['evelin', 'alejandra', 'aleja', 'karol', 'david'];
 const PATRON_VENDEDOR = /(?:venta|vendedor|vendido por)[:\s]+(\w+)/i;
 const STOP_WORDS = new Set(['en', 'de', 'del', 'la', 'el', 'que', 'con', 'sin', 'por', 'para', 'un', 'una', 'los', 'las', 'y', 'o', 'no', 'se', 'su', 'al', 'a', 'es', 'lo', 'le', 'me', 'te', 'tu', 'mi', 'mas', 'pero', 'como', 'ya', 'si', 'muy', 'todo', 'hay', 'nos', 'han', 'son', 'fue', 'era']);
 
@@ -173,4 +170,52 @@ export const esTextoUtil = (texto: string): boolean => {
     if (ratioCortos > MAX_RATIO_TOKENS_CORTOS) return false;
 
     return true;
+};
+
+// 10. Detectar banco por color dominante de la imagen (Sharp)
+export const detectarBancoPorColor = async (imageBase64: string): Promise<string | undefined> => {
+    try {
+        const buffer = Buffer.from(imageBase64, 'base64');
+        const { data, info } = await sharp(buffer)
+            .resize(200, 200, { fit: 'inside' })
+            .ensureAlpha()
+            .raw()
+            .toBuffer({ resolveWithObject: true });
+
+        const total = info.width * info.height;
+        let white = 0, black = 0, yellow = 0, pink = 0, red = 0;
+
+        for (let i = 0; i < data.length; i += 4) {
+            const r = data[i]!;
+            const g = data[i + 1]!;
+            const b = data[i + 2]!;
+
+            if (r > 220 && g > 220 && b > 220) { white++; continue; }
+            if (r < 60 && g < 60 && b < 60) { black++; continue; }
+            // Amarillo: R y G altos, B bajo
+            if (r > 170 && g > 140 && b < 110 && (r - b) > 80) { yellow++; continue; }
+            // Rosado/morado: R y B altos, G bajo
+            if (r > 130 && b > 120 && (r - g) > 20 && (b - g) > 20 && g < 170) { pink++; continue; }
+            // Rojo: R dominante, G y B bajos
+            if (r > 180 && g < 100 && b < 100 && (r - g) > 80) { red++; continue; }
+        }
+
+        const pct = (count: number) => ((count / total) * 100);
+
+        logger.info('COLOR', `white=${pct(white).toFixed(1)}% black=${pct(black).toFixed(1)}% yellow=${pct(yellow).toFixed(1)}% pink=${pct(pink).toFixed(1)}% red=${pct(red).toFixed(1)}%`);
+
+        // Bancolombia: amarillo + negro significativos
+        if (total > 0.02 && black / total > 0.02) return 'Bancolombia';
+        // Nequi: rosado/morado significativo (>5%)
+        if (pink / total > 0.04) return 'Nequi';
+        // Davivienda: rojo significativo (>3%) + blanco abundante
+        if (red / total > 5.00 && white / total > 0.25) return 'Davivienda';
+        // Daviplata: rojo significativo como fallback
+        if (red / total > 0.03) return 'Daviplata';
+
+        return undefined;
+    } catch (error) {
+        logger.error('COLOR', 'Error detectando banco por color:', error);
+        return undefined;
+    }
 };

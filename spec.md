@@ -430,6 +430,105 @@ Leyenda: ✏️ modificar | Crear nuevo | — sin cambios
 
 ---
 
+# Fase 5 — Auditoría y mejoras técnicas
+
+**Estado:** `[ ]` pendiente
+**Prerequisito:** Fases 1-4 completas.
+**Propósito:** Corregir problemas de seguridad, performance, confiabilidad y tipo-safety
+detectados en la auditoría de código contra las skills de Node.js best practices,
+backend patterns y TypeScript advanced types.
+
+## Auditoría: lo que está bien
+
+| Aspecto | Dónde |
+|---|---|
+| TS estricto (`strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`) | `tsconfig.json` |
+| Cola por chat — serializa procesamiento, evita race conditions dentro de un chat | `message.controller.ts` `encolarOperacion` |
+| Retry + backoff exponencial en llamadas OpenAI | `helpers.ts` `ejecutarConRetry` |
+| Secrets en `.gitignore` — `.env`, `google-keys.json`, `bot_memory.db` no se commitean | `.gitignore` |
+| Conteo de productos determinístico local (Fase 3) — 0 tokens, sin LLM | `luxurygotti.data.ts` `extraerListaProductos` |
+| Separación de capas — controller → services → utils | estructura `src/` |
+| Fallback TrOCR para escritura a mano con lazy loading (200MB solo si se necesita) | `vision.service.ts` |
+| Deduplicación por referencia — evita registrar el mismo comprobante 2 veces | `message.controller.ts` |
+| SQLite FIFO — límite de 300 registros, no crece infinitamente | `memory.service.ts` |
+
+## Checklist Fase 5
+
+### Seguridad
+
+- [x] **5.1** Mover PII (cuentas bancarias, nombres de vendedores) de `helpers.ts` a `config.data.ts` gitignored
+  - `CUENTAS_ABONO`, `NOMBRES_ABONO`, `CUENTAS_INGRESO`, `VENDEDORES_CONOCIDOS` movidas a `src/utils/config.data.ts`
+  - `helpers.ts` importa desde `config.data.ts`
+  - `config.data.ts` agregado a `.gitignore`
+
+- [ ] **5.2** Rotar API key de OpenAI y service account key de Google (expuestas en auditoría)
+
+### Performance
+
+- [x] **5.3** Cachear cliente de Google Sheets (singleton a nivel módulo)
+  - `sheets.service.ts`: `obtenerSheets()` cachea la promesa de autenticación
+  - Primera llamada: `new GoogleAuth()` → `getClient()`. Llamadas siguientes: retorna la promesa cacheada.
+  - Log muestra "Cliente de Google Sheets inicializado (singleton)" solo la primera vez
+
+### Confiabilidad
+
+- [x] **5.4** Implementar graceful shutdown (SIGINT/SIGTERM)
+- [x] **5.5** Fix race condition en generación de nPedido
+- [x] **5.6** Eliminar `any` restantes
+- [x] **5.7** Eliminar dead code y dependencias muertas
+  - `@google/generative-ai` removido de `package.json`
+  - `TIEMPO_ESPERA_CAJA` removido de `.env` y `.env.example`
+  - `DatosProducto` interface duplicado eliminado de `luxurygotti.data.ts`, ahora importa de `types.ts`
+  - `dist/` stale build eliminado (ya está en `.gitignore`)
+  - `jsx: "react-jsx"` removido de `tsconfig.json`
+
+- [x] **5.8** Mover grupo autorizado a variable de entorno
+  - `whatsapp.service.ts`: lee `GRUPO_AUTORIZADO` de env, soporta lista separada por comas
+  - Default: `'Contabilidad'` si no está definida
+  - `.env` y `.env.example` incluyen `GRUPO_AUTORIZADO=Contabilidad`
+
+### DevX
+
+- [ ] **5.9** Agregar eslint + prettier
+  - Sin tooling de linting/formatting en el proyecto
+
+- [ ] **5.10** Implementar tests de integración C1-C10 (todos `[ ]` sin checkear)
+
+---
+
+# Referencia de archivos (Fase 5)
+
+| Archivo | Cambios |
+|---------|---------|
+| `src/utils/helpers.ts` | ✏️ 5.1 mover PII a config |
+| `.env` / config gitignored | Crear nuevo |
+| `src/services/sheets.service.ts` | ✏️ 5.3 cachear cliente, ✏️ 5.5 fix nPedido |
+| `src/index.ts` | ✏️ 5.4 graceful shutdown |
+| `src/services/memory.service.ts` | ✏️ 5.4 db.close() |
+| `src/services/whatsapp.service.ts` | ✏️ 5.4 client.destroy(), ✏️ 5.8 grupo env var |
+| `src/services/vision.service.ts` | ✏️ 5.6 tipar trocrPipeline |
+| `src/utils/logger.ts` | ✏️ 5.6 tipar params |
+| `src/utils/luxurygotti.data.ts` | ✏️ 5.7 eliminar DatosProducto duplicado |
+| `package.json` | ✏️ 5.7 quitar `@google/generative-ai`, 5.9 agregar eslint/prettier |
+| `tsconfig.json` | ✏️ 5.7 quitar `jsx: react-jsx` |
+
+---
+
+# Variables de entorno (`.env`) — completo
+
+| Variable | Default | Descripción | Estado |
+|----------|---------|-------------|--------|
+| `OPENAI_API_KEY` | — | API key de OpenAI | Activa |
+| `OPENAI_MODEL` | `gpt-4o-mini` | Modelo de OpenAI a usar | Activa |
+| `GOOGLE_SHEETS_ID` | — | ID del Google Sheet principal | Activa |
+| `TIEMPO_ESPERA_CAJA` | — | **Eliminada** (5.7) — no usada por el código | — |
+| `SHEETS_VENTAS_NOMBRE` | `Ventas` | Nombre de la hoja de Ventas | Activa |
+| `TIEMPO_TTL_CONTEXTO` | `14400000` | 4 horas en ms. Textos más viejos se descartan. | Activa (default) |
+| `TIEMPO_CIERRE_RESPALDO` | `14400000` | 4 horas en ms. Cierre de transacciones huérfanas. | Activa (default) |
+| `GRUPO_AUTORIZADO` | `Contabilidad` | Grupo de WhatsApp autorizado (Fase 5.8) | Activa |
+
+---
+
 # Progreso general
 
 | Fase | Descripción | Estado |
@@ -438,3 +537,4 @@ Leyenda: ✏️ modificar | Crear nuevo | — sin cambios
 | 2 | Imágenes manuscritas con TrOCR local | `[x]` |
 | 3 | Cantidades de productos sin OpenAI | `[x]` |
 | 4 | Tipos y limpieza técnica | `[x]` |
+| 5 | Auditoría y mejoras técnicas | `[ ]` |

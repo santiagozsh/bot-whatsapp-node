@@ -3,7 +3,7 @@ import { extraerDatosDesdeTextoOCR, extraerDatosCliente, optimizarImagenParaOCR 
 import { escribirFilaEnExcel, escribirFilaVenta, mergeFilaVenta, actualizarFilaIngreso } from '../services/sheets.service';
 import { guardarTransaccion, actualizarFilaVenta, buscarTransaccion, buscarTransaccionPorReferencia, buscarTransaccionPorNPedido } from '../services/memory.service';
 import { extraerTextoConVisionMejorado } from '../services/vision.service';
-import { formatearFecha, normalizarTextoOCR, esTextoUtil } from '../utils/helpers';
+import { formatearFecha, normalizarTextoOCR, esTextoUtil, detectarBancoPorColor } from '../utils/helpers';
 import { logger } from '../utils/logger';
 import type { DatosIngreso } from '../types';
 
@@ -194,7 +194,8 @@ async function procesarComprobante(
     textoOCR: string,
     msg: Message,
     chat: Chat,
-    chatId: string
+    chatId: string,
+    bancoPorColor?: string
 ): Promise<void> {
     logger.info('IMAGEN', 'Datos financieros detectados → OpenAI');
 
@@ -209,7 +210,7 @@ async function procesarComprobante(
         : (contextoParaPromptA || 'No hay contexto de texto para esta imagen.');
 
     // 3. Extraer datos del comprobante con OpenAI
-    const datosExtraidos = await extraerDatosDesdeTextoOCR(textoOCR, contextoTruncado);
+    const datosExtraidos = await extraerDatosDesdeTextoOCR(textoOCR, contextoTruncado, bancoPorColor);
 
     if (!datosExtraidos || !datosExtraidos.esComprobanteValido) {
         logger.info('IMAGEN', 'No es comprobante válido');
@@ -262,7 +263,8 @@ async function procesarImagen(media: MessageMedia, msg: Message, chat: Chat, cha
         return;
     }
 
-    await procesarComprobante(textoOCR, msg, chat, chatId);
+    const bancoPorColor = await detectarBancoPorColor(media.data);
+    await procesarComprobante(textoOCR, msg, chat, chatId, bancoPorColor);
 }
 
 // ── Procesamiento de texto (sin reply) ───────────────────────

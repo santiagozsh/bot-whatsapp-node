@@ -19,16 +19,16 @@ let totalCompletionTokens = 0;
 let totalLlmCalls = 0;
 
 export const logger = {
-    error: (tag: string, msg: string, ...args: any[]) => {
+    error: (tag: string, msg: string, ...args: unknown[]) => {
         if (NIVEL >= LogLevel.ERROR) console.error(`❌ [${tag}] ${msg}`, ...args);
     },
-    warn: (tag: string, msg: string, ...args: any[]) => {
+    warn: (tag: string, msg: string, ...args: unknown[]) => {
         if (NIVEL >= LogLevel.WARN) console.warn(`⚠️ [${tag}] ${msg}`, ...args);
     },
-    info: (tag: string, msg: string, ...args: any[]) => {
+    info: (tag: string, msg: string, ...args: unknown[]) => {
         if (NIVEL >= LogLevel.INFO) console.log(`[${tag}] ${msg}`, ...args);
     },
-    debug: (tag: string, msg: string, ...args: any[]) => {
+    debug: (tag: string, msg: string, ...args: unknown[]) => {
         if (NIVEL >= LogLevel.DEBUG) console.log(`🔍 [${tag}] ${msg}`, ...args);
     },
     tokenUsage: (promptTokens: number, completionTokens: number) => {

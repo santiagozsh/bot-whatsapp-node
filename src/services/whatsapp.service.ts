@@ -3,7 +3,9 @@ import * as qrcode from 'qrcode-terminal';
 import { procesarMensajeEntrante } from '../controllers/message.controller';
 import { logger } from '../utils/logger';
 
-export const initializeWhatsApp = () => {
+export let whatsappClient: Client | null = null;
+
+export const initializeWhatsApp = (): Client => {
     const client = new Client({
         authStrategy: new LocalAuth(), 
         puppeteer: {
@@ -33,10 +35,10 @@ export const initializeWhatsApp = () => {
         try {
             const chat = await msg.getChat();
 
-            const gruposAutorizados = [
-                // 'Contabilidad| Empresa Luxury Gotti', // El de producción
-                'Contabilidad'
-            ];
+            const gruposAutorizados = (process.env.GRUPO_AUTORIZADO || 'Contabilidad')
+                .split(',')
+                .map(g => g.trim())
+                .filter(Boolean);
 
             const isTargetGroup = chat.isGroup && gruposAutorizados.includes(chat.name);
 
@@ -51,4 +53,6 @@ export const initializeWhatsApp = () => {
     });
 
     client.initialize();
+    whatsappClient = client;
+    return client;
 };

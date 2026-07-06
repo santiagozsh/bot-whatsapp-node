@@ -66,3 +66,4 @@ google-keys.json
 spa.traineddata
 eng.traineddata
 bot_memory.db
+src/utils/config.data.ts
