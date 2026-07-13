@@ -2,20 +2,7 @@ import sharp from 'sharp';
 import { logger } from './logger';
 import { CUENTAS_ABONO, NOMBRES_ABONO, CUENTAS_INGRESO, VENDEDORES_CONOCIDOS } from './config.data';
 
-// 1. Generar el identificador único en cascada
-export const generarSiguienteId = (ultimoId: string): string => {
-    // Si la hoja está vacía y no hay ID previo, arrancamos en LG-01
-    if (!ultimoId || !ultimoId.startsWith('LG-')) return 'LG-01';
-    
-    // Extraemos el número después del guion y le sumamos 1
-    const numeroActual = parseInt(ultimoId.split('-')[1] || '0', 10);
-    const siguienteNumero = numeroActual + 1;
-    
-    // padStart asegura que si es 4, ponga "04", y si es 15, deje "15"
-    return `LG-${siguienteNumero.toString().padStart(2, '0')}`;
-};
-
-// 2. Cambiar formato de "DD/MM/YYYY" a "D-Mes-YYYY"
+// 1. Cambiar formato de "DD/MM/YYYY" a "D-Mes-YYYY"
 export const formatearFecha = (fechaOriginal: string): string => {
     const meses = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
     const partes = fechaOriginal.split('/');
@@ -29,7 +16,7 @@ export const formatearFecha = (fechaOriginal: string): string => {
     return fechaOriginal; 
 };
 
-// 3. Separar la cuenta con espacios "314 352 7475"
+// 2. Separar la cuenta con espacios "314 352 7475"
 export const formatearCuenta = (cuentaOriginal: string): string => {
     const cuentaLimpia = cuentaOriginal.replace(/\s+/g, ''); // Quitamos espacios por si acaso
     if (cuentaLimpia.length === 10) {
@@ -38,7 +25,7 @@ export const formatearCuenta = (cuentaOriginal: string): string => {
     return cuentaOriginal; 
 };
 
-// 4. Retry con backoff exponencial para llamadas a APIs externas
+// 3. Retry con backoff exponencial para llamadas a APIs externas
 /**
  * Ejecuta una función async con reintentos y backoff exponencial.
  * Solo reintenta en errores de rate limit (429) o errores de servidor (500+).
@@ -75,7 +62,7 @@ export const ejecutarConRetry = async <T>(
     throw new Error('ejecutarConRetry: se agotaron los intentos');
 };
 
-// 5. Normalizar texto para búsquedas (mayúsculas sin tildes ni diacríticos)
+// 4. Normalizar texto para búsquedas (mayúsculas sin tildes ni diacríticos)
 /**
  * Convierte un texto a mayúsculas y elimina tildes/diacríticos.
  * Ejemplo: "Bogotá" → "BOGOTA", "Medellín" → "MEDELLIN", "ñoño" → "NONO"
@@ -89,7 +76,7 @@ export const normalizarTexto = (texto: string): string => {
         .trim();
 };
 
-// 6. Normalizar texto extraído por OCR para mejorar precisión de la IA
+// 5. Normalizar texto extraído por OCR para mejorar precisión de la IA
 export const normalizarTextoOCR = (texto: string): string => {
     if (!texto) return texto;
     return texto
@@ -105,7 +92,7 @@ export const normalizarTextoOCR = (texto: string): string => {
         .trim();
 };
 
-// 7. Clasificar tipo de transacción (Ingreso vs Abono) según cuenta y texto
+// 6. Clasificar tipo de transacción (Ingreso vs Abono) según cuenta y texto
 export const clasificarTipoIngreso = (
     cuentaDestino: string,
     textoOCR: string
@@ -122,7 +109,7 @@ export const clasificarTipoIngreso = (
     return 'Ingreso';
 };
 
-// 8. Extraer vendedor del contexto de WhatsApp con regex
+// 7. Extraer vendedor del contexto de WhatsApp con regex
 const PATRON_VENDEDOR = /(?:venta|vendedor|vendido por)[:\s]+(\w+)/i;
 const STOP_WORDS = new Set(['en', 'de', 'del', 'la', 'el', 'que', 'con', 'sin', 'por', 'para', 'un', 'una', 'los', 'las', 'y', 'o', 'no', 'se', 'su', 'al', 'a', 'es', 'lo', 'le', 'me', 'te', 'tu', 'mi', 'mas', 'pero', 'como', 'ya', 'si', 'muy', 'todo', 'hay', 'nos', 'han', 'son', 'fue', 'era']);
 
@@ -144,7 +131,7 @@ export const extraerVendedor = (contexto: string): string => {
     return 'JHON';
 };
 
-// 9. Validar si un texto extraído por OCR es potencialmente útil o es basura
+// 8. Validar si un texto extraído por OCR es potencialmente útil o es basura
 const MIN_CHARS_UTILES = 8;
 const MAX_RATIO_TOKENS_CORTOS = 0.55;
 
@@ -172,7 +159,7 @@ export const esTextoUtil = (texto: string): boolean => {
     return true;
 };
 
-// 10. Detectar banco por color dominante de la imagen (Sharp)
+// 9. Detectar banco por color dominante de la imagen (Sharp)
 export const detectarBancoPorColor = async (imageBase64: string): Promise<string | undefined> => {
     try {
         const buffer = Buffer.from(imageBase64, 'base64');
@@ -205,11 +192,11 @@ export const detectarBancoPorColor = async (imageBase64: string): Promise<string
         logger.info('COLOR', `white=${pct(white).toFixed(1)}% black=${pct(black).toFixed(1)}% yellow=${pct(yellow).toFixed(1)}% pink=${pct(pink).toFixed(1)}% red=${pct(red).toFixed(1)}%`);
 
         // Bancolombia: amarillo + negro significativos
-        if (total > 0.02 && black / total > 0.02) return 'Bancolombia';
+        if (yellow / total > 0.02 && black / total > 0.02) return 'Bancolombia';
         // Nequi: rosado/morado significativo (>5%)
         if (pink / total > 0.04) return 'Nequi';
-        // Davivienda: rojo significativo (>3%) + blanco abundante
-        if (red / total > 5.00 && white / total > 0.25) return 'Davivienda';
+        // Davivienda: rojo significativo (>5%) + blanco abundante
+        if (red / total > 0.05 && white / total > 0.25) return 'Davivienda';
         // Daviplata: rojo significativo como fallback
         if (red / total > 0.03) return 'Daviplata';
 

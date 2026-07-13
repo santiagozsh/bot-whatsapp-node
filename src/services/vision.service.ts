@@ -2,7 +2,7 @@ import Tesseract from 'tesseract.js';
 import { logger } from '../utils/logger';
 
 interface TrOCRPipeline {
-    (input: string | Buffer): Promise<Array<{ generated_text: string }>>;
+    (input: string | Buffer): Promise<{ generated_text: string }>;
 }
 
 type ModoOCR = 'comprobante' | 'formulario';
@@ -58,28 +58,29 @@ export const extraerTextoConVision = async (
 // ── TrOCR pipeline (lazy init, se descarga una sola vez) ───────
 
 let trocrPipeline: TrOCRPipeline | null = null;
-let trocrCargando = false;
+let trocrCargandoPromise: Promise<TrOCRPipeline | null> | null = null;
 
-async function obtenerTrOCR(): Promise<TrOCRPipeline | null> {
-    if (trocrPipeline) return trocrPipeline;
-    if (trocrCargando) return null;
-
+async function cargarTrOCR(): Promise<TrOCRPipeline | null> {
     try {
-        trocrCargando = true;
         logger.info('TrOCR', 'Cargando modelo microsoft/trocr-base-handwritten...');
 
-        // Dynamic import para no cargar transformers si nunca se necesita
         const { pipeline } = await import('@xenova/transformers');
-        trocrPipeline = await pipeline('image-to-text', 'Xenova/trocr-base-handwritten') as TrOCRPipeline;
+        trocrPipeline = await pipeline('image-to-text', 'Xenova/trocr-base-handwritten') as unknown as TrOCRPipeline;
 
         logger.info('TrOCR', 'Modelo cargado correctamente');
         return trocrPipeline;
     } catch (error) {
         logger.error('TrOCR', 'Error cargando modelo:', error);
         return null;
-    } finally {
-        trocrCargando = false;
     }
+}
+
+async function obtenerTrOCR(): Promise<TrOCRPipeline | null> {
+    if (trocrPipeline) return trocrPipeline;
+    if (trocrCargandoPromise) return trocrCargandoPromise;
+
+    trocrCargandoPromise = cargarTrOCR();
+    return trocrCargandoPromise;
 }
 
 // ── OCR mejorado: Tesseract → TrOCR fallback ──────────────────
@@ -119,8 +120,8 @@ export const extraerTextoConVisionMejorado = async (
         }
 
         const buffer = Buffer.from(imagenBase64, 'base64');
-        const resultados = await pipeline(buffer);
-        const textoTrOCR = (resultados?.[0]?.generated_text || '').trim();
+        const resultado = await pipeline(buffer);
+        const textoTrOCR = (resultado?.generated_text || '').trim();
 
         if (textoTrOCR && textoTrOCR.length >= UMBRAL_TEXTO_CORTO) {
             logger.info('TrOCR', `Texto extraído (${textoTrOCR.length} caracteres).`);

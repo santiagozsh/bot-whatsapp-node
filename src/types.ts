@@ -2,7 +2,18 @@
  * Tipos compartidos del dominio del bot.
  */
 
-// Extraído por OpenAI Prompt A desde el comprobante bancario
+// Extraído por OpenAI Prompt A desde el comprobante bancario (campos crudos, todos opcionales)
+export interface DatosOCRBrutos {
+    esComprobanteValido?: boolean;
+    fecha?: string;
+    descripcion?: string;
+    precioCompra?: string;
+    medioDePago?: string;
+    referenciaDePago?: string;
+    cuentaDestino?: string;
+}
+
+// Resultado final luego de procesar DatosOCRBrutos con defaults y clasificación local
 export interface DatosIngreso {
     esComprobanteValido: boolean;
     fecha: string;

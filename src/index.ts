@@ -40,3 +40,11 @@ process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('unhandledRejection', (reason) => {
     logger.error('PROCESS', 'Unhandled rejection:', reason);
 });
+process.on('uncaughtException', (error) => {
+    logger.error('PROCESS', 'Uncaught exception — cerrando:', error);
+    cerrarDB();
+    if (whatsappClient) {
+        whatsappClient.destroy().catch(() => {});
+    }
+    process.exit(1);
+});

@@ -5,7 +5,7 @@ import { construirPromptContable, construirPromptCliente } from '../utils/prompt
 import { extraerListaProductos } from '../utils/luxurygotti.data';
 import { ejecutarConRetry, clasificarTipoIngreso, extraerVendedor } from '../utils/helpers';
 import { logger } from '../utils/logger';
-import type { DatosIngreso, DatosCliente } from '../types';
+import type { DatosOCRBrutos, DatosIngreso, DatosCliente } from '../types';
 
 dotenv.config();
 
@@ -33,15 +33,8 @@ export async function optimizarImagenParaOCR(base64String: string): Promise<stri
     }
 }
 
-interface DatosOCRBrutos {
-    esComprobanteValido: boolean;
-    fecha?: string;
-    descripcion?: string;
-    precioCompra?: string;
-    medioDePago?: string;
-    referenciaDePago?: string;
-    cuentaDestino?: string;
-}
+const MAX_CHARS_OCR_PROMPT_A = 4000;
+const MAX_CHARS_CONTEXTO_PROMPT_A = 2000;
 
 /**
  * Envía texto OCR a OpenAI (Prompt A).
@@ -54,7 +47,20 @@ export const extraerDatosDesdeTextoOCR = async (
 ): Promise<DatosIngreso | undefined> => {
     try {
         const openaiModel = process.env.OPENAI_MODEL || 'gpt-4o-mini';
-        const prompt = construirPromptContable(contextoTexto, textoOCR, bancoPorColor);
+
+        let textoOCRTruncado = textoOCR;
+        if (textoOCR.length > MAX_CHARS_OCR_PROMPT_A) {
+            logger.warn('AI', `OCR truncado: ${textoOCR.length} → ${MAX_CHARS_OCR_PROMPT_A} caracteres`);
+            textoOCRTruncado = textoOCR.substring(0, MAX_CHARS_OCR_PROMPT_A);
+        }
+
+        let contextoTruncado = contextoTexto;
+        if (contextoTexto.length > MAX_CHARS_CONTEXTO_PROMPT_A) {
+            logger.warn('AI', `Contexto truncado: ${contextoTexto.length} → ${MAX_CHARS_CONTEXTO_PROMPT_A} caracteres`);
+            contextoTruncado = contextoTexto.substring(0, MAX_CHARS_CONTEXTO_PROMPT_A);
+        }
+
+        const prompt = construirPromptContable(contextoTruncado, textoOCRTruncado, bancoPorColor);
 
         if (bancoPorColor) logger.info('AI', `Banco por color: ${bancoPorColor}`);
         logger.info('AI', 'Enviando texto a OpenAI (Prompt A — contable)...');

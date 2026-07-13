@@ -45,12 +45,26 @@ function parsearCantidadSegura(valor: string): number {
     return n;
 }
 
-function esPrecio(valor: string): boolean {
+const KEYWORDS_CANTIDAD: Set<string> = new Set([
+    'UNDS', 'UND', 'UNIDADES',
+    'CAJAS', 'CAJA',
+    'RELOJES', 'RELOJ',
+    'CORREAS', 'CORREA',
+    'PULSERAS', 'PULSERA',
+    'FUNDAS', 'FUNDA',
+    'GAFAS', 'LENTES', 'LENTE',
+    'PERFUMES', 'PERFUME', 'COLONIAS', 'COLONIA',
+    'ESTUCHES', 'ESTUCHE',
+    'ACCESORIOS', 'ACCESORIO',
+]);
+
+function esPrecio(valor: string, siguientePalabra?: string): boolean {
     const numeroStr = valor.replace(/[.,]/g, '');
     const n = parseInt(numeroStr, 10);
     if (isNaN(n)) return false;
     if (n > 999) return true;
-    if (/\d000/.test(numeroStr)) return true;
+    if (siguientePalabra && KEYWORDS_CANTIDAD.has(siguientePalabra.toUpperCase())) return false;
+    if (/\d000/.test(numeroStr) && n >= 1000) return true;
     return false;
 }
 
@@ -64,13 +78,15 @@ function extraerCantidad(item: string): { cantidad: number; textoLimpio: string 
 
     const leadingMult = t.match(/^(\d+)\s*[×xX]\s*(.+)/);
     if (leadingMult && leadingMult[1] && leadingMult[2]) {
-        if (esPrecio(leadingMult[1])) return { cantidad: 1, textoLimpio: t };
+        const sigPalabra = leadingMult[2].trim().split(/\s+/)[0];
+        if (esPrecio(leadingMult[1], sigPalabra)) return { cantidad: 1, textoLimpio: t };
         return { cantidad: parsearCantidadSegura(leadingMult[1]), textoLimpio: leadingMult[2].trim() };
     }
 
     const leadingQty = t.match(/^(\d+)\s+(.+)/);
     if (leadingQty && leadingQty[1] && leadingQty[2]) {
-        if (esPrecio(leadingQty[1])) return { cantidad: 1, textoLimpio: t };
+        const sigPalabra = leadingQty[2].trim().split(/\s+/)[0];
+        if (esPrecio(leadingQty[1], sigPalabra)) return { cantidad: 1, textoLimpio: t };
         return { cantidad: parsearCantidadSegura(leadingQty[1]), textoLimpio: leadingQty[2].trim() };
     }
 
@@ -125,29 +141,6 @@ function clasificarItem(item: string): { esReloj: boolean; cantidad: number } | 
     }
 
     return null;
-}
-
-export function clasificarProducto(producto: string): { cantidadRelojes: number; cantidadOtros: number } {
-    if (!producto || producto.trim() === '' || producto === 'N/A') {
-        return { cantidadRelojes: 0, cantidadOtros: 0 };
-    }
-
-    const items = producto.split(',').map(i => i.trim()).filter(Boolean);
-    let cantidadRelojes = 0;
-    let cantidadOtros = 0;
-
-    for (const item of items) {
-        const resultado = clasificarItem(item);
-        if (!resultado) continue;
-        const { esReloj, cantidad } = resultado;
-        if (esReloj) {
-            cantidadRelojes += cantidad;
-        } else {
-            cantidadOtros += cantidad;
-        }
-    }
-
-    return { cantidadRelojes, cantidadOtros };
 }
 
 export function extraerListaProductos(textoCrudo: string): DatosProducto {

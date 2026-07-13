@@ -18,18 +18,23 @@ let totalPromptTokens = 0;
 let totalCompletionTokens = 0;
 let totalLlmCalls = 0;
 
+function timestamp(): string {
+    const d = new Date();
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+}
+
 export const logger = {
     error: (tag: string, msg: string, ...args: unknown[]) => {
-        if (NIVEL >= LogLevel.ERROR) console.error(`❌ [${tag}] ${msg}`, ...args);
+        if (NIVEL >= LogLevel.ERROR) console.error(`❌ [${timestamp()}] [${tag}] ${msg}`, ...args);
     },
     warn: (tag: string, msg: string, ...args: unknown[]) => {
-        if (NIVEL >= LogLevel.WARN) console.warn(`⚠️ [${tag}] ${msg}`, ...args);
+        if (NIVEL >= LogLevel.WARN) console.warn(`⚠️ [${timestamp()}] [${tag}] ${msg}`, ...args);
     },
     info: (tag: string, msg: string, ...args: unknown[]) => {
-        if (NIVEL >= LogLevel.INFO) console.log(`[${tag}] ${msg}`, ...args);
+        if (NIVEL >= LogLevel.INFO) console.log(`[${timestamp()}] [${tag}] ${msg}`, ...args);
     },
     debug: (tag: string, msg: string, ...args: unknown[]) => {
-        if (NIVEL >= LogLevel.DEBUG) console.log(`🔍 [${tag}] ${msg}`, ...args);
+        if (NIVEL >= LogLevel.DEBUG) console.log(`🔍 [${timestamp()}] [${tag}] ${msg}`, ...args);
     },
     tokenUsage: (promptTokens: number, completionTokens: number) => {
         totalPromptTokens += promptTokens;

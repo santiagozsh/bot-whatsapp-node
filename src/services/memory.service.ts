@@ -28,8 +28,10 @@ export function inicializarDB(): void {
 
     try {
         db.exec(`ALTER TABLE historial_transacciones ADD COLUMN referenciaPago TEXT`);
-    } catch {
-        // ya existe
+    } catch (error: any) {
+        if (!error?.message?.includes('duplicate column') && !error?.message?.includes('already exists')) {
+            throw error;
+        }
     }
 
     logger.info('DB', 'Base de datos inicializada (bot_memory.db)');
@@ -57,7 +59,7 @@ export function guardarTransaccion(
             DELETE FROM historial_transacciones
             WHERE messageId IN (
                 SELECT messageId FROM historial_transacciones
-                ORDER BY fechaRegistro ASC
+                ORDER BY fechaRegistro ASC, rowid ASC
                 LIMIT ?
             )
         `).run(exceso);
@@ -102,7 +104,7 @@ export function generarSiguienteNPedido(): string {
         RETURNING valor
     `).get() as { valor: number };
 
-    return `LG-${String(row.valor).padStart(2, '0')}`;
+    return `LG-${String(row.valor).padStart(3, '0')}`;
 }
 
 export function cerrarDB(): void {

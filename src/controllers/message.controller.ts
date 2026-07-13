@@ -5,7 +5,7 @@ import { guardarTransaccion, actualizarFilaVenta, buscarTransaccion, buscarTrans
 import { extraerTextoConVisionMejorado } from '../services/vision.service';
 import { formatearFecha, normalizarTextoOCR, esTextoUtil, detectarBancoPorColor } from '../utils/helpers';
 import { logger } from '../utils/logger';
-import type { DatosIngreso } from '../types';
+import type { DatosIngreso, DatosCliente } from '../types';
 
 // ── Constantes ────────────────────────────────────────────────
 
@@ -96,6 +96,32 @@ function hoyStr(): string {
 
 // ── Cierre de transacción anterior (escribe Ventas) ──────────
 
+function tieneDatosUtilesDeVenta(datos: DatosCliente): boolean {
+    const tieneProductos = !!datos.producto && datos.producto !== 'N/A';
+    const tieneCantidades = (datos.cantidadRelojes ?? 0) > 0 || (datos.cantidadOtros ?? 0) > 0;
+    const tieneNombre = !!datos.nombreCliente && datos.nombreCliente !== 'N/A';
+    return tieneProductos || tieneCantidades || tieneNombre;
+}
+
+async function escribirOMergearVenta(
+    datosCliente: DatosCliente,
+    nPedido: string,
+    messageId: string,
+    fecha: string,
+    filaVentaExistente: number | null
+): Promise<void> {
+    const fechaFormateada = formatearFecha(fecha);
+
+    if (filaVentaExistente === null) {
+        const filaVenta = await escribirFilaVenta(datosCliente, nPedido, fechaFormateada);
+        if (filaVenta > 0) {
+            actualizarFilaVenta(messageId, filaVenta);
+        }
+    } else {
+        await mergeFilaVenta(filaVentaExistente, datosCliente);
+    }
+}
+
 async function finalizarTransaccionAnterior(chatId: string, chat: Chat): Promise<void> {
     const transaccion = transaccionActualPorChat.get(chatId);
     if (!transaccion) return;
@@ -118,16 +144,11 @@ async function finalizarTransaccionAnterior(chatId: string, chat: Chat): Promise
     }
 
     const t = buscarTransaccion(transaccion.messageId);
-
     if (datosCliente.vendedor && datosCliente.vendedor !== 'N/A' && t) {
         await actualizarFilaIngreso(t.filaIngreso, { vendedor: datosCliente.vendedor });
     }
 
-    const tieneProductos = datosCliente.producto && datosCliente.producto !== 'N/A';
-    const tieneCantidades = (datosCliente.cantidadRelojes ?? 0) > 0 || (datosCliente.cantidadOtros ?? 0) > 0;
-    const tieneNombre = datosCliente.nombreCliente && datosCliente.nombreCliente !== 'N/A';
-
-    if (!tieneProductos && !tieneCantidades && !tieneNombre) {
+    if (!tieneDatosUtilesDeVenta(datosCliente)) {
         logger.info('CIERRE', 'Sin datos útiles para Ventas');
         contextoPorChat.delete(chatId);
         transaccionActualPorChat.set(chatId, null);
@@ -140,16 +161,7 @@ async function finalizarTransaccionAnterior(chatId: string, chat: Chat): Promise
         return;
     }
 
-    const fecha = formatearFecha(transaccion.fecha);
-
-    if (t.filaVenta === null) {
-        const filaVenta = await escribirFilaVenta(datosCliente, transaccion.nPedido, fecha);
-        if (filaVenta > 0) {
-            actualizarFilaVenta(transaccion.messageId, filaVenta);
-        }
-    } else {
-        await mergeFilaVenta(t.filaVenta, datosCliente);
-    }
+    await escribirOMergearVenta(datosCliente, transaccion.nPedido, transaccion.messageId, transaccion.fecha, t.filaVenta);
 
     contextoPorChat.delete(chatId);
     transaccionActualPorChat.set(chatId, null);
@@ -305,24 +317,10 @@ async function procesarTextoConReply(msg: Message, chat: Chat, chatId: string): 
             await actualizarFilaIngreso(t.filaIngreso, { vendedor: datosCliente.vendedor });
         }
 
-        const tieneProductos = datosCliente.producto && datosCliente.producto !== 'N/A';
-        const tieneCantidades = (datosCliente.cantidadRelojes ?? 0) > 0 || (datosCliente.cantidadOtros ?? 0) > 0;
-        const tieneNombre = datosCliente.nombreCliente && datosCliente.nombreCliente !== 'N/A';
-
-        if (!tieneProductos && !tieneCantidades && !tieneNombre) return;
-
+        if (!tieneDatosUtilesDeVenta(datosCliente)) return;
         if (!t) return;
 
-        const fecha = formatearFecha(transaccionActual.fecha);
-
-        if (t.filaVenta === null) {
-            const filaVenta = await escribirFilaVenta(datosCliente, transaccionActual.nPedido, fecha);
-            if (filaVenta > 0) {
-                actualizarFilaVenta(transaccionActual.messageId, filaVenta);
-            }
-        } else {
-            await mergeFilaVenta(t.filaVenta, datosCliente);
-        }
+        await escribirOMergearVenta(datosCliente, transaccionActual.nPedido, transaccionActual.messageId, transaccionActual.fecha, t.filaVenta);
         return;
     }
 
@@ -358,21 +356,9 @@ async function procesarTextoConReply(msg: Message, chat: Chat, chatId: string): 
             await actualizarFilaIngreso(transaccion.filaIngreso, { vendedor: datosCliente.vendedor });
         }
 
-        const tieneProductos = datosCliente.producto && datosCliente.producto !== 'N/A';
-        const tieneCantidades = (datosCliente.cantidadRelojes ?? 0) > 0 || (datosCliente.cantidadOtros ?? 0) > 0;
-        const tieneNombre = datosCliente.nombreCliente && datosCliente.nombreCliente !== 'N/A';
+        if (!tieneDatosUtilesDeVenta(datosCliente)) return;
 
-        if (!tieneProductos && !tieneCantidades && !tieneNombre) return;
-
-        if (transaccion.filaVenta === null) {
-            const fecha = formatearFecha(hoyStr());
-            const filaVenta = await escribirFilaVenta(datosCliente, transaccion.nPedido, fecha);
-            if (filaVenta > 0) {
-                actualizarFilaVenta(transaccion.messageId, filaVenta);
-            }
-        } else {
-            await mergeFilaVenta(transaccion.filaVenta, datosCliente);
-        }
+        await escribirOMergearVenta(datosCliente, transaccion.nPedido, transaccion.messageId, hoyStr(), transaccion.filaVenta);
         return;
     }
 
