@@ -33,20 +33,18 @@ const obtenerSheets = async () => {
     return sheetsClientPromise;
 };
 
+const extraerNumeroFila = (updatedRange: string | undefined | null): number => {
+    if (!updatedRange) return 0;
+    const match = updatedRange.match(/!?[A-Z]+(\d+)/);
+    return match?.[1] ? parseInt(match[1], 10) : 0;
+};
+
 export const escribirFilaEnExcel = async (datosJSON: DatosIngreso): Promise<{ nPedido: string; filaIngreso: number } | null> => {
     try {
         const sheets = await obtenerSheets();
 
         const nuevoId = generarSiguienteNPedido();
 
-        logger.info('SHEETS', 'Leyendo columna A para calcular fila destino...');
-        const response = await sheets.spreadsheets.values.get({
-            spreadsheetId: SPREADSHEET_ID,
-            range: 'Ingresos transacciones!A:A',
-        });
-
-        const filas = response.data.values;
-        const filaIngreso = (filas?.length || 0) + 1;
         const fechaLimpia = formatearFecha(datosJSON.fecha);
         const cuentaLimpia = formatearCuenta(datosJSON.cuentaDestino);
 
@@ -62,12 +60,16 @@ export const escribirFilaEnExcel = async (datosJSON: DatosIngreso): Promise<{ nP
             datosJSON.vendedor || "JHON",
         ];
 
-        await sheets.spreadsheets.values.append({
+        const appendResponse = await sheets.spreadsheets.values.append({
             spreadsheetId: SPREADSHEET_ID,
             range: 'Ingresos transacciones!A:I',
             valueInputOption: 'USER_ENTERED',
+            insertDataOption: 'INSERT_ROWS',
             requestBody: { values: [filaDeDatos] },
         });
+
+        const updatedRange: string | undefined | null = appendResponse.data.updates?.updatedRange;
+        const filaIngreso = extraerNumeroFila(updatedRange);
 
         logger.info('SHEETS', `Fila creada: ${nuevoId} (fila ${filaIngreso})`);
         return { nPedido: nuevoId, filaIngreso };
