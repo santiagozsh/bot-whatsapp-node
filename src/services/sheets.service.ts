@@ -90,14 +90,6 @@ export const escribirFilaVenta = async (
         const sheets = await obtenerSheets();
         const hojaVentas = process.env.SHEETS_VENTAS_NOMBRE || 'Ventas';
 
-        const lecturaActual = await sheets.spreadsheets.values.get({
-            spreadsheetId: SPREADSHEET_ID,
-            range: `${hojaVentas}!A:A`,
-        });
-
-        const filasExistentes = lecturaActual.data.values || [];
-        const numeroFilaNueva = filasExistentes.length + 1;
-
         const departamento = obtenerDepartamento(datosCliente.municipio || '');
 
         const filaDeDatos = [
@@ -113,14 +105,16 @@ export const escribirFilaVenta = async (
             datosCliente.cantidadOtros  ?? 0,
         ];
 
-        logger.info('SHEETS', `Escribiendo Ventas fila ${numeroFilaNueva} para ${nPedido}...`);
-
-        await sheets.spreadsheets.values.append({
+        const appendResponse = await sheets.spreadsheets.values.append({
             spreadsheetId: SPREADSHEET_ID,
             range: `${hojaVentas}!A:J`,
             valueInputOption: 'USER_ENTERED',
+            insertDataOption: 'INSERT_ROWS',
             requestBody: { values: [filaDeDatos] },
         });
+
+        const updatedRange: string | undefined | null = appendResponse.data.updates?.updatedRange;
+        const numeroFilaNueva = extraerNumeroFila(updatedRange);
 
         logger.info('SHEETS', `Ventas fila ${numeroFilaNueva} creada para ${nPedido}`);
         return numeroFilaNueva;
