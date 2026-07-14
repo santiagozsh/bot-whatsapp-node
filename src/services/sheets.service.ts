@@ -29,7 +29,7 @@ const inicializarGoogleSheets = async () => {
     return google.sheets({ version: 'v4', auth: cliente as any });
 };
 
-const obtenerSheets = async () => {
+export const obtenerSheets = async () => {
     if (!sheetsClientPromise) {
         sheetsClientPromise = inicializarGoogleSheets();
         logger.info('SHEETS', 'Cliente de Google Sheets inicializado (singleton)');
@@ -191,8 +191,9 @@ export const actualizarFilaIngreso = async (
             const sheets = await obtenerSheets();
 
             const mapColumnas: Record<string, string> = {
-                tipo:     'C',
-                vendedor: 'I',
+                tipo:        'C',
+                descripcion: 'D',
+                vendedor:    'I',
             };
 
             const data: { range: string; values: string[][] }[] = [];
@@ -224,6 +225,85 @@ export const actualizarFilaIngreso = async (
         });
     } catch (error) {
         logger.error('SHEETS', 'Error actualizando fila de ingreso (agotados reintentos):', error);
+    }
+};
+
+export interface FilaIngreso {
+    fila: number;
+    nPedido: string;
+    fecha: string;
+    tipo: string;
+    descripcion: string;
+    precioCompra: string;
+    medioDePago: string;
+    referenciaDePago: string;
+    cuentaDestino: string;
+    vendedor: string;
+}
+
+export interface FilaVenta {
+    fila: number;
+    nPedido: string;
+    cantidadRelojes: number;
+    cantidadOtros: number;
+}
+
+export const leerIngresosTransacciones = async (): Promise<FilaIngreso[]> => {
+    try {
+        return await ejecutarConRetry(async () => {
+            const sheets = await obtenerSheets();
+
+            const response = await sheets.spreadsheets.values.get({
+                spreadsheetId: SPREADSHEET_ID,
+                range: 'Ingresos transacciones!A:I',
+            });
+
+            const rows = response.data.values || [];
+            if (rows.length <= 1) return [];
+
+            return rows.slice(1).map((row: string[], index: number) => ({
+                fila: index + 2,
+                nPedido: row[0] || '',
+                fecha: row[1] || '',
+                tipo: row[2] || '',
+                descripcion: row[3] || '',
+                precioCompra: row[4] || '',
+                medioDePago: row[5] || '',
+                referenciaDePago: row[6] || '',
+                cuentaDestino: row[7] || '',
+                vendedor: row[8] || '',
+            }));
+        });
+    } catch (error) {
+        logger.error('SHEETS', 'Error leyendo Ingresos transacciones:', error);
+        return [];
+    }
+};
+
+export const leerVentas = async (): Promise<FilaVenta[]> => {
+    try {
+        return await ejecutarConRetry(async () => {
+            const sheets = await obtenerSheets();
+            const hojaVentas = process.env.SHEETS_VENTAS_NOMBRE || 'Ventas';
+
+            const response = await sheets.spreadsheets.values.get({
+                spreadsheetId: SPREADSHEET_ID,
+                range: `${hojaVentas}!A:J`,
+            });
+
+            const rows = response.data.values || [];
+            if (rows.length <= 1) return [];
+
+            return rows.slice(1).map((row: string[], index: number) => ({
+                fila: index + 2,
+                nPedido: row[0] || '',
+                cantidadRelojes: parseInt(row[8] ?? '0', 10) || 0,
+                cantidadOtros: parseInt(row[9] ?? '0', 10) || 0,
+            }));
+        });
+    } catch (error) {
+        logger.error('SHEETS', 'Error leyendo Ventas:', error);
+        return [];
     }
 };
 

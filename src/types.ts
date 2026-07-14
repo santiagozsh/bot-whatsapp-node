@@ -46,6 +46,7 @@ export interface DatosCliente extends DatosClienteCrudos {
 export interface DatosIngresoParcial {
     tipo?: string;
     vendedor?: string;
+    descripcion?: string;
 }
 
 // Producto individual detectado por el parser local
