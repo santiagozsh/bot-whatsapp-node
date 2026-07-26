@@ -1,4 +1,3 @@
-import { Message, Chat, MessageMedia } from 'whatsapp-web.js';
 import { extraerDatosDesdeTextoOCR, extraerDatosCliente, optimizarImagenParaOCR } from '../services/ai.service';
 import { escribirFilaEnExcel, escribirFilaVenta, mergeFilaVenta, actualizarFilaIngreso } from '../services/sheets.service';
 import { guardarTransaccion, actualizarFilaVenta, buscarTransaccion, buscarTransaccionPorReferencia, buscarTransaccionPorNPedido } from '../services/memory.service';
@@ -9,7 +8,7 @@ import type { DatosIngreso, DatosCliente } from '../types';
 
 // ── Constantes ────────────────────────────────────────────────
 
-const TIEMPO_TTL_CONTEXTO = parseInt(process.env.TIEMPO_TTL_CONTEXTO || '14400000'); // 4 horas
+const TIEMPO_TTL_CONTEXTO = parseInt(process.env.TIEMPO_TTL_CONTEXTO || '14400000');
 const TIEMPO_CIERRE_RESPALDO = parseInt(process.env.TIEMPO_CIERRE_RESPALDO || '14400000');
 
 const KEYWORDS_FINANCIEROS = [
@@ -20,7 +19,25 @@ const KEYWORDS_FINANCIEROS = [
     'transaccion', 'transacción',
 ];
 
-// ── Tipos locales ─────────────────────────────────────────────
+// ── Tipos ────────────────────────────────────────────────────
+
+export interface MensajeEntrante {
+    messageId: string;
+    chatId: string;
+    chatName: string;
+    body: string;
+    hasMedia: boolean;
+    mediaMimetype?: string;
+    hasQuotedMsg: boolean;
+    quotedMsgId?: string;
+    quotedBody?: string;
+    media?: MediaData;
+}
+
+export interface MediaData {
+    data: string;
+    mimetype: string;
+}
 
 interface ItemContexto {
     texto: string;
@@ -70,7 +87,7 @@ function obtenerContexto(chatId: string): string {
     return vigentes.map(item => item.texto).join('\n');
 }
 
-// ── Cola por chat (serialización de operaciones) ─────────────
+// ── Cola por chat ────────────────────────────────────────────
 
 async function encolarOperacion(chatId: string, fn: () => Promise<void>): Promise<void> {
     const anterior = colasPorChat.get(chatId) || Promise.resolve();
@@ -94,7 +111,7 @@ function hoyStr(): string {
     return `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getFullYear()}`;
 }
 
-// ── Cierre de transacción anterior (escribe Ventas) ──────────
+// ── Cierre de transacción anterior ───────────────────────────
 
 function tieneDatosUtilesDeVenta(datos: DatosCliente): boolean {
     const tieneProductos = !!datos.producto && datos.producto !== 'N/A';
@@ -122,7 +139,7 @@ async function escribirOMergearVenta(
     }
 }
 
-async function finalizarTransaccionAnterior(chatId: string, chat: Chat): Promise<void> {
+async function finalizarTransaccionAnterior(chatId: string): Promise<void> {
     const transaccion = transaccionActualPorChat.get(chatId);
     if (!transaccion) return;
 
@@ -169,7 +186,7 @@ async function finalizarTransaccionAnterior(chatId: string, chat: Chat): Promise
 
 // ── Timer de respaldo ────────────────────────────────────────
 
-function programarCierreRespaldo(chatId: string, chat: Chat): void {
+function programarCierreRespaldo(chatId: string): void {
     const existente = timersRespaldoPorChat.get(chatId);
     if (existente) clearTimeout(existente);
 
@@ -178,7 +195,7 @@ function programarCierreRespaldo(chatId: string, chat: Chat): void {
         await encolarOperacion(chatId, async () => {
             if (transaccionActualPorChat.get(chatId)) {
                 logger.info('RESPALDO', `Cierre por inactividad (${TIEMPO_CIERRE_RESPALDO / 1000 / 60 / 60}h)`);
-                await finalizarTransaccionAnterior(chatId, chat);
+                await finalizarTransaccionAnterior(chatId);
             }
         });
     }, TIEMPO_CIERRE_RESPALDO);
@@ -188,7 +205,7 @@ function programarCierreRespaldo(chatId: string, chat: Chat): void {
 
 // ── Pipeline de comprobante ──────────────────────────────────
 
-async function preprocesarImagen(media: MessageMedia): Promise<string> {
+async function preprocesarImagen(media: MediaData): Promise<string> {
     const imgOptimizada = await optimizarImagenParaOCR(media.data);
     return normalizarTextoOCR(await extraerTextoConVisionMejorado(imgOptimizada));
 }
@@ -204,24 +221,19 @@ function procesarImagenNoComprobante(chatId: string, textoOCR: string): void {
 
 async function procesarComprobante(
     textoOCR: string,
-    msg: Message,
-    chat: Chat,
-    chatId: string,
+    ctx: MensajeEntrante,
     bancoPorColor?: string
 ): Promise<void> {
     logger.info('IMAGEN', 'Datos financieros detectados → OpenAI');
 
-    // 1. Cerrar la transacción anterior
-    await finalizarTransaccionAnterior(chatId, chat);
+    await finalizarTransaccionAnterior(ctx.chatId);
 
-    // 2. Obtener contexto para Prompt A
-    const contextoParaPromptA = obtenerContexto(chatId);
+    const contextoParaPromptA = obtenerContexto(ctx.chatId);
     const MAX_CONTEXTO_CHARS = 300;
     const contextoTruncado = contextoParaPromptA.length > MAX_CONTEXTO_CHARS
         ? contextoParaPromptA.substring(0, MAX_CONTEXTO_CHARS) + '...'
         : (contextoParaPromptA || 'No hay contexto de texto para esta imagen.');
 
-    // 3. Extraer datos del comprobante con OpenAI
     const datosExtraidos = await extraerDatosDesdeTextoOCR(textoOCR, contextoTruncado, bancoPorColor);
 
     if (!datosExtraidos || !datosExtraidos.esComprobanteValido) {
@@ -229,7 +241,6 @@ async function procesarComprobante(
         return;
     }
 
-    // 4. Verificar duplicado por referencia
     if (datosExtraidos.referenciaDePago && datosExtraidos.referenciaDePago !== 'N/A') {
         const existente = buscarTransaccionPorReferencia(datosExtraidos.referenciaDePago);
         if (existente) {
@@ -238,15 +249,12 @@ async function procesarComprobante(
         }
     }
 
-    // 5. Registrar comprobante
-    await registrarComprobante(datosExtraidos, msg, chat, chatId);
+    await registrarComprobante(datosExtraidos, ctx);
 }
 
 async function registrarComprobante(
     datosExtraidos: DatosIngreso,
-    msg: Message,
-    chat: Chat,
-    chatId: string
+    ctx: MensajeEntrante
 ): Promise<void> {
     const resultado = await escribirFilaEnExcel(datosExtraidos);
     if (!resultado) {
@@ -256,60 +264,52 @@ async function registrarComprobante(
 
     const { nPedido, filaIngreso } = resultado;
 
-    guardarTransaccion(msg.id._serialized, nPedido, filaIngreso, datosExtraidos.referenciaDePago || null);
+    guardarTransaccion(ctx.messageId, nPedido, filaIngreso, datosExtraidos.referenciaDePago || null);
 
-    transaccionActualPorChat.set(chatId, { nPedido, messageId: msg.id._serialized, fecha: datosExtraidos.fecha });
+    transaccionActualPorChat.set(ctx.chatId, { nPedido, messageId: ctx.messageId, fecha: datosExtraidos.fecha });
 
-    programarCierreRespaldo(chatId, chat);
+    programarCierreRespaldo(ctx.chatId);
 
     logger.info('IMAGEN', `✅ ${nPedido} registrado (fila ${filaIngreso})`);
 }
 
-async function procesarImagen(media: MessageMedia, msg: Message, chat: Chat, chatId: string): Promise<void> {
+async function procesarImagen(media: MediaData, ctx: MensajeEntrante): Promise<void> {
     logger.info('IMAGEN', 'Procesando imagen...');
 
     const textoOCR = await preprocesarImagen(media);
 
     if (!textoContieneDatosFinancieros(textoOCR)) {
-        procesarImagenNoComprobante(chatId, textoOCR);
+        procesarImagenNoComprobante(ctx.chatId, textoOCR);
         return;
     }
 
     const bancoPorColor = await detectarBancoPorColor(media.data);
-    await procesarComprobante(textoOCR, msg, chat, chatId, bancoPorColor);
+    await procesarComprobante(textoOCR, ctx, bancoPorColor);
 }
 
 // ── Procesamiento de texto (sin reply) ───────────────────────
 
-async function procesarTextoSinReply(msg: Message, chatId: string): Promise<void> {
-    agregarAlContexto(chatId, msg.body);
-    logger.info('TEXTO', `→ contexto: "${msg.body.substring(0, 50)}..."`);
+async function procesarTextoSinReply(ctx: MensajeEntrante): Promise<void> {
+    agregarAlContexto(ctx.chatId, ctx.body);
+    logger.info('TEXTO', `→ contexto: "${ctx.body.substring(0, 50)}..."`);
 }
 
 // ── Procesamiento de texto (con reply) ───────────────────────
 
-async function procesarTextoConReply(msg: Message, chat: Chat, chatId: string): Promise<void> {
-    let mensajeCitado: Message;
-    try {
-        mensajeCitado = await msg.getQuotedMessage();
-        if (!mensajeCitado) {
-            logger.warn('REPLY', 'getQuotedMessage devolvió null → contexto');
-            agregarAlContexto(chatId, msg.body);
-            return;
-        }
-    } catch {
-        logger.warn('REPLY', 'No se pudo obtener el mensaje citado → contexto');
-        agregarAlContexto(chatId, msg.body);
+async function procesarTextoConReply(ctx: MensajeEntrante): Promise<void> {
+    const quotedId = ctx.quotedMsgId;
+    if (!quotedId) {
+        logger.warn('REPLY', 'Sin quotedMsgId → contexto');
+        agregarAlContexto(ctx.chatId, ctx.body);
         return;
     }
-    const quotedId = mensajeCitado.id._serialized;
 
-    const transaccionActual = transaccionActualPorChat.get(chatId);
+    const transaccionActual = transaccionActualPorChat.get(ctx.chatId);
     if (transaccionActual && transaccionActual.messageId === quotedId) {
-        agregarAlContexto(chatId, msg.body);
+        agregarAlContexto(ctx.chatId, ctx.body);
         logger.info('REPLY', `Asociado a transacción activa ${transaccionActual.nPedido}`);
 
-        const datosCliente = await extraerDatosCliente(msg.body);
+        const datosCliente = await extraerDatosCliente(ctx.body);
         if (!datosCliente) return;
 
         const t = buscarTransaccion(transaccionActual.messageId);
@@ -324,12 +324,14 @@ async function procesarTextoConReply(msg: Message, chat: Chat, chatId: string): 
         return;
     }
 
-    const patronCorreccion = /^(tipo|vendedor):\s*(.+)$/i;
-    const matchCorreccion = msg.body.match(patronCorreccion);
-    if (matchCorreccion && matchCorreccion[1] && matchCorreccion[2]) {
-        const campo = matchCorreccion[1].toLowerCase() as 'tipo' | 'vendedor';
-        const valor = matchCorreccion[2].trim();
-        const textoCitado = mensajeCitado.body || '';
+    const patronCorreccionCampoValor = /^(?<campo>tipo|vendedor):\s*(?<valor>.+)$/i;
+    const matchCorreccion = ctx.body.match(patronCorreccionCampoValor);
+    const campoGrupo = matchCorreccion?.groups?.campo;
+    const valorGrupo = matchCorreccion?.groups?.valor;
+    if (campoGrupo && valorGrupo) {
+        const campo = campoGrupo.toLowerCase() as 'tipo' | 'vendedor';
+        const valor = valorGrupo.trim();
+        const textoCitado = ctx.quotedBody || '';
         const matchNPedido = textoCitado.match(/LG-\d+/);
         if (matchNPedido && matchNPedido[0]) {
             const t = buscarTransaccionPorNPedido(matchNPedido[0]);
@@ -349,7 +351,7 @@ async function procesarTextoConReply(msg: Message, chat: Chat, chatId: string): 
     const transaccion = buscarTransaccion(quotedId);
     if (transaccion) {
         logger.info('REPLY', `Reply tardío para ${transaccion.nPedido}`);
-        const datosCliente = await extraerDatosCliente(msg.body);
+        const datosCliente = await extraerDatosCliente(ctx.body);
         if (!datosCliente) return;
 
         if (datosCliente.vendedor && datosCliente.vendedor !== 'N/A') {
@@ -363,42 +365,35 @@ async function procesarTextoConReply(msg: Message, chat: Chat, chatId: string): 
     }
 
     logger.info('REPLY', 'Sin transacción conocida → contexto');
-    agregarAlContexto(chatId, msg.body);
+    agregarAlContexto(ctx.chatId, ctx.body);
 }
 
 // ── Entrada principal ────────────────────────────────────────
 
-export const procesarMensajeEntrante = async (msg: Message) => {
-    const chat = await msg.getChat();
-    const chatId = chat.id._serialized;
-
-    await encolarOperacion(chatId, async () => {
-        if (msg.hasMedia) {
-            if (msg.type === 'sticker' || msg.type === 'video' || msg.type === 'audio' || msg.type === 'ptt') {
+export const procesarMensajeEntrante = async (ctx: MensajeEntrante) => {
+    await encolarOperacion(ctx.chatId, async () => {
+        if (ctx.hasMedia) {
+            if (!ctx.media || !ctx.media.mimetype.includes('image') || ctx.media.mimetype.includes('webp')) {
                 return;
             }
 
-            const media = await msg.downloadMedia();
-            if (!media || !media.mimetype.includes('image') || media.mimetype.includes('webp')) {
-                return;
-            }
-
-            if (msg.hasQuotedMsg) {
-                const mensajeCitado = await msg.getQuotedMessage();
-                const transaccion = buscarTransaccion(mensajeCitado.id._serialized);
+            if (ctx.hasQuotedMsg && ctx.quotedMsgId) {
+                const transaccion = buscarTransaccion(ctx.quotedMsgId);
                 if (transaccion) {
                     logger.info('REPLY', `Imagen reply descartada para ${transaccion.nPedido}`);
                     return;
                 }
             }
 
-            await procesarImagen(media, msg, chat, chatId);
+            await procesarImagen(ctx.media, ctx);
+            return;
+        }
 
-        } else if (msg.body) {
-            if (msg.hasQuotedMsg) {
-                await procesarTextoConReply(msg, chat, chatId);
+        if (ctx.body) {
+            if (ctx.hasQuotedMsg) {
+                await procesarTextoConReply(ctx);
             } else {
-                await procesarTextoSinReply(msg, chatId);
+                await procesarTextoSinReply(ctx);
             }
         }
     });

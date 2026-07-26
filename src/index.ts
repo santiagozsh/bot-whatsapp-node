@@ -1,4 +1,4 @@
-import { initializeWhatsApp, whatsappClient } from './services/whatsapp.service';
+import { initializeWhatsApp, whatsappClient, whatsappDestroy } from './services/whatsapp.service';
 import { inicializarDB, cerrarDB } from './services/memory.service';
 import { clasificarPedidosDelDia } from './services/classifier.service';
 import { logger } from './utils/logger';
@@ -7,7 +7,7 @@ logger.info('INIT', 'Iniciando el servidor...');
 inicializarDB();
 initializeWhatsApp();
 
-setInterval(() => logger.summary(), 3600000); // resumen de tokens cada hora
+setInterval(() => logger.summary(), 3600000);
 
 const msHastaMedianoche = (() => {
     const ahora = new Date();
@@ -35,8 +35,8 @@ const gracefulShutdown = async (signal: string) => {
     }, 5000);
 
     try {
-        if (whatsappClient) {
-            await whatsappClient.destroy();
+        if (whatsappDestroy) {
+            await whatsappDestroy();
             logger.info('SHUTDOWN', 'Cliente WhatsApp cerrado');
         }
         cerrarDB();
@@ -57,8 +57,8 @@ process.on('unhandledRejection', (reason) => {
 process.on('uncaughtException', (error) => {
     logger.error('PROCESS', 'Uncaught exception — cerrando:', error);
     cerrarDB();
-    if (whatsappClient) {
-        whatsappClient.destroy().catch(() => {});
+    if (whatsappDestroy) {
+        whatsappDestroy().catch(() => {});
     }
     process.exit(1);
 });

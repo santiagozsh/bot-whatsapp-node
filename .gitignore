@@ -54,9 +54,9 @@ coverage/
 .DS_Store
 Thumbs.db
 
-# Whataspp dirs
-.wwebjs_auth/
-.wwebjs_cache/
+# WhatsApp session
+auth_info/
+.scratch/
 
 # Google Sheets API
 google-keys.json
