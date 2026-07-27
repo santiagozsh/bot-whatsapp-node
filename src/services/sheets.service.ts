@@ -2,7 +2,7 @@ import { google } from 'googleapis';
 import * as path from 'path';
 import * as dotenv from 'dotenv';
 import { formatearFecha, formatearCuenta, ejecutarConRetry } from '../utils/helpers';
-import { generarSiguienteNPedido } from './memory.service';
+import { generarSiguienteNPedido, registrarSyncCallback } from './memory.service';
 import { obtenerDepartamento } from '../utils/colombia.data';
 import { logger } from '../utils/logger';
 import type { DatosIngreso, DatosCliente, DatosIngresoParcial } from '../types';
@@ -48,7 +48,7 @@ export const escribirFilaEnExcel = async (datosJSON: DatosIngreso): Promise<{ nP
         return await ejecutarConRetry(async () => {
             const sheets = await obtenerSheets();
 
-            const nuevoId = generarSiguienteNPedido();
+            const nuevoId = await generarSiguienteNPedido();
 
             const fechaLimpia = formatearFecha(datosJSON.fecha);
             const cuentaLimpia = formatearCuenta(datosJSON.cuentaDestino);
@@ -248,6 +248,34 @@ export interface FilaVenta {
     cantidadOtros: number;
 }
 
+export const obtenerUltimoNPedido = async (): Promise<number | null> => {
+    try {
+        return await ejecutarConRetry(async () => {
+            const sheets = await obtenerSheets();
+
+            const response = await sheets.spreadsheets.values.get({
+                spreadsheetId: SPREADSHEET_ID,
+                range: 'Ingresos transacciones!A:A',
+            });
+
+            const rows = response.data.values || [];
+            for (let i = rows.length - 1; i >= 0; i--) {
+                const valor = rows[i]?.[0];
+                if (valor) {
+                    const match = String(valor).match(/LG-(\d+)/);
+                    if (match && match[1]) {
+                        return parseInt(match[1], 10);
+                    }
+                }
+            }
+            return null;
+        });
+    } catch (error) {
+        logger.error('SHEETS', 'Error obteniendo último nPedido:', error);
+        return null;
+    }
+};
+
 export const leerIngresosTransacciones = async (): Promise<FilaIngreso[]> => {
     try {
         return await ejecutarConRetry(async () => {
@@ -306,5 +334,7 @@ export const leerVentas = async (): Promise<FilaVenta[]> => {
         return [];
     }
 };
+
+registrarSyncCallback(obtenerUltimoNPedido);
 
 

@@ -90,7 +90,7 @@ export function actualizarFilaVenta(messageId: string, filaVenta: number): void 
     logger.info('DB', `filaVenta=${filaVenta} para messageId=${messageId}`);
 }
 
-export function generarSiguienteNPedido(): string {
+function asegurarTablaSecuencia(): void {
     db.exec(`
         CREATE TABLE IF NOT EXISTS secuencia_pedidos (
             id    INTEGER PRIMARY KEY CHECK (id = 1),
@@ -98,6 +98,35 @@ export function generarSiguienteNPedido(): string {
         );
         INSERT OR IGNORE INTO secuencia_pedidos (id, valor) VALUES (1, 0);
     `);
+}
+
+export type SyncCallback = () => Promise<number | null>;
+
+let _syncCallback: SyncCallback | null = null;
+let _syncIntentado = false;
+
+export function registrarSyncCallback(cb: SyncCallback): void {
+    _syncCallback = cb;
+}
+
+export async function generarSiguienteNPedido(): Promise<string> {
+    asegurarTablaSecuencia();
+
+    if (!_syncIntentado && _syncCallback) {
+        _syncIntentado = true;
+        try {
+            const ultimo = await _syncCallback();
+            if (ultimo !== null) {
+                const valorActual = obtenerValorSecuencia();
+                if (ultimo > valorActual) {
+                    establecerValorSecuencia(ultimo);
+                    logger.info('DB', `Secuencia sincronizada desde callback: ${valorActual} → ${ultimo}`);
+                }
+            }
+        } catch (err) {
+            logger.error('DB', 'Error en sync callback de secuencia:', err);
+        }
+    }
 
     const row = db.prepare(`
         UPDATE secuencia_pedidos SET valor = valor + 1 WHERE id = 1
@@ -105,6 +134,18 @@ export function generarSiguienteNPedido(): string {
     `).get() as { valor: number };
 
     return `LG-${String(row.valor).padStart(3, '0')}`;
+}
+
+export function obtenerValorSecuencia(): number {
+    asegurarTablaSecuencia();
+    const row = db.prepare(`SELECT valor FROM secuencia_pedidos WHERE id = 1`).get() as { valor: number };
+    return row.valor;
+}
+
+export function establecerValorSecuencia(valor: number): void {
+    asegurarTablaSecuencia();
+    db.prepare(`UPDATE secuencia_pedidos SET valor = ? WHERE id = 1`).run(valor);
+    logger.info('DB', `Secuencia establecida a ${valor}`);
 }
 
 export function cerrarDB(): void {

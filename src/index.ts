@@ -1,11 +1,30 @@
 import { initializeWhatsApp, whatsappClient, whatsappDestroy } from './services/whatsapp.service';
-import { inicializarDB, cerrarDB } from './services/memory.service';
+import { inicializarDB, cerrarDB, obtenerValorSecuencia, establecerValorSecuencia } from './services/memory.service';
+import { obtenerUltimoNPedido } from './services/sheets.service';
 import { clasificarPedidosDelDia } from './services/classifier.service';
 import { logger } from './utils/logger';
 
-logger.info('INIT', 'Iniciando el servidor...');
-inicializarDB();
-initializeWhatsApp();
+async function iniciarServidor() {
+    logger.info('INIT', 'Iniciando el servidor...');
+    inicializarDB();
+
+    try {
+        const ultimo = await obtenerUltimoNPedido();
+        if (ultimo !== null) {
+            const valorActual = obtenerValorSecuencia();
+            if (ultimo > valorActual) {
+                establecerValorSecuencia(ultimo);
+                logger.info('DB', `Secuencia sincronizada desde Sheets: ${valorActual} → ${ultimo}`);
+            }
+        }
+    } catch (err) {
+        logger.error('INIT', 'Error al sincronizar secuencia desde Sheets:', err);
+    }
+
+    initializeWhatsApp();
+}
+
+iniciarServidor();
 
 setInterval(() => logger.summary(), 3600000);
 
