@@ -1,4 +1,4 @@
-import { initializeWhatsApp, whatsappClient, whatsappDestroy } from './services/whatsapp.service';
+import { initializeWhatsApp, whatsappClient, whatsappDestroy, verificarVersionBaileys } from './services/whatsapp.service';
 import { inicializarDB, cerrarDB, obtenerValorSecuencia, establecerValorSecuencia } from './services/memory.service';
 import { obtenerUltimoNPedido } from './services/sheets.service';
 import { clasificarPedidosDelDia } from './services/classifier.service';
@@ -22,6 +22,7 @@ async function iniciarServidor() {
     }
 
     initializeWhatsApp();
+    verificarVersionBaileys();
 }
 
 iniciarServidor();
