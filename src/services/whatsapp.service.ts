@@ -1,6 +1,7 @@
-import { makeWASocket, useMultiFileAuthState, DisconnectReason, downloadContentFromMessage, toBuffer } from '@whiskeysockets/baileys';
+import { makeWASocket, useMultiFileAuthState, DisconnectReason, downloadContentFromMessage, toBuffer, Browsers } from '@whiskeysockets/baileys';
 import type { WAMessage } from '@whiskeysockets/baileys';
 import * as qrcode from 'qrcode-terminal';
+import * as fs from 'fs';
 import { procesarMensajeEntrante } from '../controllers/message.controller';
 import type { MensajeEntrante, MediaData } from '../controllers/message.controller';
 import pino from 'pino';
@@ -11,6 +12,40 @@ export let whatsappDestroy: (() => Promise<void>) | null = null;
 
 const gruposCache = new Map<string, string>();
 let reconnectando = false;
+const RUTA_CREDS = './auth_info/creds.json';
+
+function extraerStatusDelError(error: unknown): number | null {
+    if (!error || typeof error !== 'object') return null;
+    const output = (error as Record<string, unknown>).output;
+    if (!output || typeof output !== 'object') return null;
+    const statusCode = (output as Record<string, unknown>).statusCode;
+    return typeof statusCode === 'number' ? statusCode : null;
+}
+
+function describirRazonDesconexion(error: unknown): string {
+    const statusCode = extraerStatusDelError(error);
+    if (statusCode === null) return 'sin error (cierre normal)';
+
+    const nombreEnum = DisconnectReason[statusCode] as string | undefined;
+    const base = nombreEnum ? `${statusCode} (${nombreEnum})` : `${statusCode} (desconocido)`;
+    const mensaje = (error as Error | undefined)?.message || '(sin mensaje)';
+
+    const interpretaciones: Record<number, string> = {
+        [DisconnectReason.loggedOut]: 'SESIÓN REVOCADA: el teléfono mató/desplazó la sesión',
+        [DisconnectReason.connectionReplaced]: 'SESIÓN DESPLAZADA: límite de 4 dispositivos o socket duplicado',
+        [DisconnectReason.connectionClosed]: 'CONEXIÓN CERRADA por WhatsApp',
+        [DisconnectReason.connectionLost]: 'CONEXIÓN PERDIDA (sin respuesta del servidor)',
+        [DisconnectReason.badSession]: 'SESIÓN CORRUPTA (credenciales inválidas)',
+        [DisconnectReason.forbidden]: 'PROHIBIDO (403): rechazo del servidor',
+        [DisconnectReason.unavailableService]: 'SERVICIO NO DISPONIBLE (503)',
+        [DisconnectReason.restartRequired]: 'REINICIO REQUERIDO por el protocolo',
+        [DisconnectReason.multideviceMismatch]: 'CONFLICTO DE MULTIDISPOSITIVO',
+        405: 'REGISTRO RECHAZADO (rate limit/throttle de WhatsApp)',
+    };
+    const interpretacion = interpretaciones[statusCode] || '';
+
+    return `código ${base} | mensaje: "${mensaje}" | ${interpretacion}`;
+}
 
 function isLoggedOut(error: unknown): boolean {
     if (!error || typeof error !== 'object') return false;
@@ -53,7 +88,8 @@ export const initializeWhatsApp = async (): Promise<void> => {
 
     const sock = makeWASocket({
         auth: state,
-        logger: pino({ level: 'warn' }),
+        browser: Browsers.windows('Chrome'),
+        logger: pino({ level: process.env.LOG_BAILEYS === 'info' ? 'info' : 'warn' }),
     });
 
     whatsappClient = sock;
@@ -67,6 +103,10 @@ export const initializeWhatsApp = async (): Promise<void> => {
             qrcode.generate(qr, { small: true });
         }
 
+        if (connection === 'connecting') {
+            logger.info('WHATSAPP', 'Conectando al servidor de WhatsApp...');
+        }
+
         if (connection === 'open') {
             reconnectando = false;
             logger.info('WHATSAPP', '✅ Conectado y escuchando mensajes');
@@ -74,8 +114,14 @@ export const initializeWhatsApp = async (): Promise<void> => {
         }
 
         if (connection === 'close') {
-            const shouldReconnect = !isLoggedOut(lastDisconnect?.error);
+            const error = lastDisconnect?.error;
+            const shouldReconnect = !isLoggedOut(error);
             logger.info('WHATSAPP', `Conexión cerrada. Reconnect: ${shouldReconnect}`);
+            logger.error('WHATSAPP', `DIAGNÓSTICO: ${describirRazonDesconexion(error)}`);
+            if (error instanceof Error && error.stack) {
+                logger.error('WHATSAPP', `DIAGNÓSTICO stack: ${error.stack}`);
+            }
+            logger.info('WHATSAPP', `DIAGNÓSTICO credenciales en disco: ${fs.existsSync(RUTA_CREDS) ? 'SÍ existen (sesión guardada)' : 'NO existen (pedirá QR/registro)'}`);
             if (shouldReconnect && !reconnectando) {
                 reconnectando = true;
                 initializeWhatsApp();
