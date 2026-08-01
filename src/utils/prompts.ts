@@ -4,23 +4,26 @@ const hintBanco = bancoPorColor
     ? `\nBANCO DETECTADO VISUALMENTE: ${bancoPorColor}. Usa este valor como medioDePago.\n`
     : '';
 
-return `Analista contable. Extrae datos del comprobante.
+return `Analista contable. Extrae los datos de una transferencia bancaria a partir del OCR de la imagen del comprobante.
 ${hintBanco}
-OCR:
+OCR (texto extraído de la IMAGEN):
 ${textoOCR}
 
-WhatsApp:
-${contextoWhatsApp}
+DECISIÓN — esComprobanteValido:
+- true SOLO si el OCR corresponde a un comprobante real de transferencia (Nequi, Bancolombia, Davivienda o Daviplata) con datos típicos: banco/billetera, valor, referencia y/o cuenta.
+- false si el OCR es de otra cosa (foto de producto, caja, reloj, nota, chat) o es ilegible.
+- Decide EXCLUSIVAMENTE con el OCR de arriba. El historial de WhatsApp de abajo es solo contexto de la conversación y NUNCA debe influir en esta decisión.
 
-FILTRO: Si no es transferencia (Nequi, Bancolombia, Davivienda, Daviplata) → {"esComprobanteValido":false}. Casos: caja, reloj, foto, SIN_TEXTO_DETECTADO.
-
-EXTRAER:
+EXTRAER (solo si esComprobanteValido es true):
 - fecha: DD/MM/YYYY
 - precioCompra: string sin símbolos (ej "165000")
 - medioDePago: banco o billetera que EMITE el comprobante. ATENCIÓN: el OCR puede mencionar "Nequi" como texto promocional de otros bancos ("transferencias a Nequi"). Ignora esas menciones y determina quién EMITE realmente el comprobante. Si no puedes determinarlo → "No identificado".
 - referenciaDePago: n° de referencia, No.Comprobante, No.Aprob
 - cuentaDestino: cuenta destino (10 dígitos)
-- descripcion: ""Pedido al por menor" ponlo por defecto"
+- descripcion: "Pedido al por menor" por defecto
+
+HISTORIAL DE WHATSAPP (contexto de la conversación — NO es la imagen. Úsalo solo para enriquecer campos, nunca para esComprobanteValido):
+${contextoWhatsApp}
 
 JSON: {"esComprobanteValido":true,"fecha":"","descripcion":"","precioCompra":"","medioDePago":"","referenciaDePago":"","cuentaDestino":""}`;
 };

@@ -47,6 +47,7 @@ export const extraerTextoConVision = async (
         }
 
         logger.info('OCR', `Texto extraído (${textoExtraido.length} caracteres).`);
+        logger.debug('OCR', textoExtraido);
         return textoExtraido;
 
     } catch (error) {

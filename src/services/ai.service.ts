@@ -60,6 +60,9 @@ export const extraerDatosDesdeTextoOCR = async (
             contextoTruncado = contextoTexto.substring(0, MAX_CHARS_CONTEXTO_PROMPT_A);
         }
 
+        logger.debug('AI', `OCR para Prompt A (${textoOCRTruncado.length} chars): ${textoOCRTruncado}`);
+        logger.debug('AI', `Contexto para Prompt A (${contextoTruncado.length} chars): ${contextoTruncado}`);
+
         const prompt = construirPromptContable(contextoTruncado, textoOCRTruncado, bancoPorColor);
 
         if (bancoPorColor) logger.info('AI', `Banco por color: ${bancoPorColor}`);
