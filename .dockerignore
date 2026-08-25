@@ -1,0 +1,11 @@
+
+node_modules/
+.agents
+docs/
+.dockerignore
+.env.example
+AGENTS.md
+.gitignore
+Dockerfile
+spec.md
+skills-lock.json

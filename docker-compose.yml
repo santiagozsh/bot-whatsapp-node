@@ -1,0 +1,11 @@
+services:
+  app:
+    container_name: node-bot
+    image: elsantiagod/bot-app-dev
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: ${OPENAI_MODEL}
+      GOOGLE_SHEETS_ID: ${GOOGLE_SHEETS_ID}
+      SHEETS_VENTAS_NOMBRE: ${SHEETS_VENTAS_NOMBRE}
+      GRUPO_AUTORIZADO: ${GRUPO_AUTORIZADO}
+      LOG_LEVEL: ${LOG_LEVEL}
