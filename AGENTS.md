@@ -22,3 +22,22 @@ El agente debe detenerse y esperar aprobación explícita del usuario antes de e
 
 Cuando necesites consultar la documentación oficial de OpenAI u otra librería, usa las herramientas de `context7`.
 
+## Language policy (see `docs/adr/0002-language-policy.md`)
+
+- **Public artifacts in English:** commit messages, README, `docs/*.md`, ADRs, GitHub issues,
+  new code identifiers and comments. Never big-bang rename existing Spanish identifiers.
+- **Private artifacts in Spanish:** internal notes under `docs/internal/` (gitignored).
+- **Always Spanish:** OpenAI prompts and domain strings (`'nequi'`, `'consignación'`, etc.) —
+  they process real Spanish-language input.
+- Conversations with the agent may be in Spanish; deliverables follow the rules above.
+
+## Official issue tracker
+
+The project tracker is **GitHub Issues** on this repository (use `gh issue ...`).
+
+- Workstream label prefixes: `wayfinder:*` (extraction accuracy map) and `platform:*`
+  (infrastructure hardening).
+- Type labels within each workstream: `task`, `research`.
+- Every issue declares its dependencies in the body as `Blocked by: #N`.
+
+
