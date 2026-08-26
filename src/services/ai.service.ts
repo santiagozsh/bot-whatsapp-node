@@ -3,7 +3,7 @@ import * as dotenv from 'dotenv';
 import sharp from 'sharp';
 import { construirPromptContable, construirPromptCliente } from '../utils/prompts';
 import { extraerListaProductos } from '../utils/luxurygotti.data';
-import { ejecutarConRetry, clasificarTipoIngreso, extraerVendedor } from '../utils/helpers';
+import { executeWithRetry, classifyIncomeType, extractVendor } from '../utils/helpers';
 import { logger } from '../utils/logger';
 import type { DatosOCRBrutos, DatosIngreso, DatosCliente } from '../types';
 
@@ -68,7 +68,7 @@ export const extraerDatosDesdeTextoOCR = async (
         if (bancoPorColor) logger.info('AI', `Banco por color: ${bancoPorColor}`);
         logger.info('AI', 'Enviando texto a OpenAI (Prompt A — contable)...');
 
-        const resultado = await ejecutarConRetry(() => openai.chat.completions.create({
+        const resultado = await executeWithRetry(() => openai.chat.completions.create({
             model: openaiModel,
             messages: [{ role: 'user', content: prompt }],
             response_format: { type: 'json_object' },
@@ -85,8 +85,8 @@ export const extraerDatosDesdeTextoOCR = async (
         if (!crudo.esComprobanteValido) return undefined;
 
         const cuenta = crudo.cuentaDestino || '';
-        const tipo = clasificarTipoIngreso(cuenta, textoOCR);
-        const vendedor = extraerVendedor(contextoTexto);
+        const tipo = classifyIncomeType(cuenta, textoOCR);
+        const vendedor = extractVendor(contextoTexto);
 
         const medioDePago = tipo === 'Abono'
             ? 'Nequi bodega'
@@ -117,7 +117,7 @@ export const extraerDatosCliente = async (bloqueTexto: string): Promise<DatosCli
 
         logger.info('AI', 'Enviando a OpenAI (Prompt B — cliente)...');
 
-        const resultado = await ejecutarConRetry(() => openai.chat.completions.create({
+        const resultado = await executeWithRetry(() => openai.chat.completions.create({
             model: openaiModel,
             messages: [{ role: 'user', content: prompt }],
             response_format: { type: 'json_object' },

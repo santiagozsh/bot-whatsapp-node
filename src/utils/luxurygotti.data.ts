@@ -1,4 +1,4 @@
-import { normalizarTexto } from './helpers';
+import { normalizeText } from './helpers';
 import type { DatosProducto } from '../types';
 
 const MARCAS_RELOJ: Set<string> = new Set([
@@ -110,7 +110,7 @@ function contieneMarcaReloj(normalizado: string): boolean {
 
 function clasificarItem(item: string): { esReloj: boolean; cantidad: number } | null {
     const { cantidad, textoLimpio } = extraerCantidad(item);
-    const normalizado = normalizarTexto(textoLimpio);
+    const normalizado = normalizeText(textoLimpio);
     const palabras = normalizado.split(/\s+/);
 
     // Si el item es puro precio sin marca/producto → no es producto

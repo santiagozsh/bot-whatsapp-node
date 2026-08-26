@@ -1,4 +1,4 @@
-import { normalizarTexto } from './helpers';
+import { normalizeText } from './helpers';
 
 /**
  * Diccionario de municipios colombianos → nombre del departamento.
@@ -1123,6 +1123,6 @@ const MUNICIPIOS_COLOMBIA: Record<string, string> = {
  */
 export function obtenerDepartamento(municipio: string): string {
     if (!municipio || municipio.trim() === "") return "N/A";
-    const clave = normalizarTexto(municipio);
+    const clave = normalizeText(municipio);
     return MUNICIPIOS_COLOMBIA[clave] ?? "N/A";
 }

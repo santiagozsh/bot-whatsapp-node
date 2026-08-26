@@ -1,7 +1,7 @@
 import { google } from 'googleapis';
 import * as path from 'path';
 import * as dotenv from 'dotenv';
-import { formatearFecha, formatearCuenta, ejecutarConRetry } from '../utils/helpers';
+import { formatDate, formatAccountNumber, executeWithRetry } from '../utils/helpers';
 import { generarSiguienteNPedido, registrarSyncCallback } from './memory.service';
 import { obtenerDepartamento } from '../utils/colombia.data';
 import { logger } from '../utils/logger';
@@ -45,13 +45,13 @@ const extraerNumeroFila = (updatedRange: string | undefined | null): number => {
 
 export const escribirFilaEnExcel = async (datosJSON: DatosIngreso): Promise<{ nPedido: string; filaIngreso: number } | null> => {
     try {
-        return await ejecutarConRetry(async () => {
+        return await executeWithRetry(async () => {
             const sheets = await obtenerSheets();
 
             const nuevoId = await generarSiguienteNPedido();
 
-            const fechaLimpia = formatearFecha(datosJSON.fecha);
-            const cuentaLimpia = formatearCuenta(datosJSON.cuentaDestino);
+            const fechaLimpia = formatDate(datosJSON.fecha);
+            const cuentaLimpia = formatAccountNumber(datosJSON.cuentaDestino);
 
             const filaDeDatos = [
                 nuevoId,
@@ -92,7 +92,7 @@ export const escribirFilaVenta = async (
     fecha: string
 ): Promise<number> => {
     try {
-        return await ejecutarConRetry(async () => {
+        return await executeWithRetry(async () => {
             const sheets = await obtenerSheets();
             const hojaVentas = process.env.SHEETS_VENTAS_NOMBRE || 'Ventas';
 
@@ -136,7 +136,7 @@ export const mergeFilaVenta = async (
     datosNuevos: DatosCliente
 ): Promise<void> => {
     try {
-        await ejecutarConRetry(async () => {
+        await executeWithRetry(async () => {
             const sheets = await obtenerSheets();
             const hojaVentas = process.env.SHEETS_VENTAS_NOMBRE || 'Ventas';
 
@@ -187,7 +187,7 @@ export const actualizarFilaIngreso = async (
     campos: DatosIngresoParcial
 ): Promise<void> => {
     try {
-        await ejecutarConRetry(async () => {
+        await executeWithRetry(async () => {
             const sheets = await obtenerSheets();
 
             const mapColumnas: Record<string, string> = {
@@ -250,7 +250,7 @@ export interface FilaVenta {
 
 export const obtenerUltimoNPedido = async (): Promise<number | null> => {
     try {
-        return await ejecutarConRetry(async () => {
+        return await executeWithRetry(async () => {
             const sheets = await obtenerSheets();
 
             const response = await sheets.spreadsheets.values.get({
@@ -278,7 +278,7 @@ export const obtenerUltimoNPedido = async (): Promise<number | null> => {
 
 export const leerIngresosTransacciones = async (): Promise<FilaIngreso[]> => {
     try {
-        return await ejecutarConRetry(async () => {
+        return await executeWithRetry(async () => {
             const sheets = await obtenerSheets();
 
             const response = await sheets.spreadsheets.values.get({
@@ -310,7 +310,7 @@ export const leerIngresosTransacciones = async (): Promise<FilaIngreso[]> => {
 
 export const leerVentas = async (): Promise<FilaVenta[]> => {
     try {
-        return await ejecutarConRetry(async () => {
+        return await executeWithRetry(async () => {
             const sheets = await obtenerSheets();
             const hojaVentas = process.env.SHEETS_VENTAS_NOMBRE || 'Ventas';
 

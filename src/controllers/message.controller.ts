@@ -2,7 +2,7 @@ import { extraerDatosDesdeTextoOCR, extraerDatosCliente, optimizarImagenParaOCR 
 import { escribirFilaEnExcel, escribirFilaVenta, mergeFilaVenta, actualizarFilaIngreso } from '../services/sheets.service';
 import { guardarTransaccion, actualizarFilaVenta, buscarTransaccion, buscarTransaccionPorReferencia, buscarTransaccionPorNPedido } from '../services/memory.service';
 import { extraerTextoConVisionMejorado } from '../services/vision.service';
-import { formatearFecha, normalizarTextoOCR, esTextoUtil, detectarBancoPorColor } from '../utils/helpers';
+import { formatDate, normalizeOcrText, isUsefulText, detectBankByColor } from '../utils/helpers';
 import { logger } from '../utils/logger';
 import type { DatosIngreso, DatosCliente } from '../types';
 
@@ -127,7 +127,7 @@ async function escribirOMergearVenta(
     fecha: string,
     filaVentaExistente: number | null
 ): Promise<void> {
-    const fechaFormateada = formatearFecha(fecha);
+    const fechaFormateada = formatDate(fecha);
 
     if (filaVentaExistente === null) {
         const filaVenta = await escribirFilaVenta(datosCliente, nPedido, fechaFormateada);
@@ -207,11 +207,11 @@ function programarCierreRespaldo(chatId: string): void {
 
 async function preprocesarImagen(media: MediaData): Promise<string> {
     const imgOptimizada = await optimizarImagenParaOCR(media.data);
-    return normalizarTextoOCR(await extraerTextoConVisionMejorado(imgOptimizada));
+    return normalizeOcrText(await extraerTextoConVisionMejorado(imgOptimizada));
 }
 
 function procesarImagenNoComprobante(chatId: string, textoOCR: string): void {
-    if (textoOCR && textoOCR !== 'SIN_TEXTO_DETECTADO' && esTextoUtil(textoOCR)) {
+    if (textoOCR && textoOCR !== 'SIN_TEXTO_DETECTADO' && isUsefulText(textoOCR)) {
         agregarAlContexto(chatId, textoOCR);
         logger.info('IMAGEN', `Sin datos financieros → acumulada en contexto (${textoOCR.length} chars)`);
     } else {
@@ -283,7 +283,7 @@ async function procesarImagen(media: MediaData, ctx: MensajeEntrante): Promise<v
         return;
     }
 
-    const bancoPorColor = await detectarBancoPorColor(media.data);
+    const bancoPorColor = await detectBankByColor(media.data);
     await procesarComprobante(textoOCR, ctx, bancoPorColor);
 }
 
