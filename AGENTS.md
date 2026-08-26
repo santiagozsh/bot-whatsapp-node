@@ -1,43 +1,59 @@
-# Reglas del Agente — bot-whatsapp-node
+# Agent Guidelines — bot-whatsapp-node
 
-## Aprobación obligatoria antes de cambios
+This repository contains a production WhatsApp accounting automation bot for Luxury Gotti. Agents working in this repository must strictly adhere to the following directives.
 
-Antes de modificar, crear o eliminar cualquier archivo de código fuente,
-el agente DEBE presentar un plan detallado que incluya:
+---
 
-1. **Qué se va a cambiar** — descripción del problema y solución propuesta
-2. **Archivos afectados** — lista exacta de archivos que se modificarán, crearán o eliminarán
-3. **Qué se quita** — código o lógica que se eliminará
-4. **Qué se agrega** — código o lógica nueva
-5. **Por qué** — justificación técnica de la decisión
+## 1. Mandatory Plan Approval Before Source Code Changes
 
-El agente debe detenerse y esperar aprobación explícita del usuario antes de ejecutar cualquier cambio.
+Before modifying, creating, or deleting any source code file, the agent **MUST** present a detailed plan containing:
 
-### Excepciones (no requieren aprobación previa)
-- Corrección de errores de sintaxis triviales (typos)
-- Agregar comentarios o documentación sin cambiar lógica
-- Correr comandos de solo lectura (tsc --noEmit, cat, ls, etc.)
+1. **What is changing** — Problem summary and proposed technical solution.
+2. **Affected files** — Exact list of files to be modified, created, or deleted.
+3. **What is removed** — Code, logic, or dependencies being eliminated.
+4. **What is added** — New code, logic, tests, or dependencies being introduced.
+5. **Why** — Technical justification and trade-offs considered.
 
-## Documentación oficial
+The agent must halt and wait for explicit user approval before executing any code modifications.
 
-Cuando necesites consultar la documentación oficial de OpenAI u otra librería, usa las herramientas de `context7`.
+### Exceptions (no prior approval required)
+- Trivial syntax typo fixes.
+- Adding non-functional comments or documentation updates.
+- Read-only diagnostics commands (`tsc --noEmit`, `git status`, `ls`, etc.).
 
-## Language policy (see `docs/adr/0002-language-policy.md`)
+---
 
-- **Public artifacts in English:** commit messages, README, `docs/*.md`, ADRs, GitHub issues,
-  new code identifiers and comments. Never big-bang rename existing Spanish identifiers.
-- **Private artifacts in Spanish:** internal notes under `docs/internal/` (gitignored).
-- **Always Spanish:** OpenAI prompts and domain strings (`'nequi'`, `'consignación'`, etc.) —
-  they process real Spanish-language input.
-- Conversations with the agent may be in Spanish; deliverables follow the rules above.
+## 2. Language & Phrasing Policy (ADR 0002)
 
-## Official issue tracker
+- **Public artifacts in English:** Commit messages, `README.md`, `docs/*.md`, ADRs, GitHub issues, pull requests, new code identifiers, and comments. Never execute a big-bang rename of existing Spanish code identifiers.
+- **Private/internal artifacts in Spanish:** Personal notes under `docs/internal/` (gitignored).
+- **Domain strings stay in Spanish permanently:** OpenAI prompts, banking keywords (`'nequi'`, `'consignación'`), and product terms process real Colombian Spanish text and must not be translated.
+- **Conversations:** May occur in English or Spanish per user preference.
 
-The project tracker is **GitHub Issues** on this repository (use `gh issue ...`).
+### Active English Learning Loop
+The project owner is actively breaking through the B1/B2 English plateau to advance into DevOps/SRE roles.
+- When the user prompts in English with raw grammar or unconventional vocabulary, the agent should optionally append a **concise 1-line "Idiomatic Phrasing Tip"** at the bottom of the response.
+- Highlight high-leverage technical verbs and SRE terminology (*e.g., mitigate, decouple, reconcile, persist, bottleneck, throttle*).
+- Keep it concise so it does not distract from the engineering task.
 
-- Workstream label prefixes: `wayfinder:*` (extraction accuracy map) and `platform:*`
-  (infrastructure hardening).
-- Type labels within each workstream: `task`, `research`.
-- Every issue declares its dependencies in the body as `Blocked by: #N`.
+---
 
+## 3. Official Issue Tracker & Workstreams
 
+The single source of truth for work is **GitHub Issues** on this repository (`gh issue ...`).
+
+- **Workstream Label Prefixes:**
+  - `platform:*` — Infrastructure hardening, Docker, CI/CD, observability, SRE practices (see `docs/roadmap.md`).
+  - `wayfinder:*` — Data extraction accuracy and business logic precision (see Issue #11).
+- **Type Labels:** `task`, `research`, `grilling`, `prototype`.
+- **Dependencies:** Every issue must declare its blocking edges in the body as `Blocked by: #N` or `Blocked by: none`.
+
+---
+
+## 4. Documentation & Domain Model Reference
+
+- **Domain Glossary:** Refer to `CONTEXT.md` for ubiquitous language definitions.
+- **Architecture Overview:** Refer to `docs/architecture.md` for end-to-end event flows and state lifecycle.
+- **Platform Roadmap:** Refer to `docs/roadmap.md` for operational milestones (Phases 0–5).
+- **Architectural Decisions:** Refer to `docs/adr/` before introducing breaking architectural shifts.
+- **Official Library Docs:** When consulting third-party library documentation (OpenAI, Baileys, etc.), utilize `context7` tools where available.
