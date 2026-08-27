@@ -1,9 +1,9 @@
 import Database from 'better-sqlite3';
 import { logger } from '../utils/logger';
 
-const db = new Database('bot_memory.db');
+let db: Database.Database = new Database('bot_memory.db');
 
-export interface Transaccion {
+export interface TransactionRecord {
     messageId: string;
     nPedido: string;
     filaIngreso: number;
@@ -12,9 +12,22 @@ export interface Transaccion {
     referenciaPago: string | null;
 }
 
-const LIMITE_REGISTROS = 300;
+// Backward-compatible alias
+export type Transaccion = TransactionRecord;
 
-export function inicializarDB(): void {
+const MAX_TRANSACTION_RECORDS = 300;
+
+/**
+ * Initializes the SQLite database tables and schema migrations.
+ * Creates `historial_transacciones` and `secuencia_pedidos` if they do not exist.
+ * 
+ * @param customDbPath - Optional database file path or ':memory:' for isolated testing.
+ */
+export function initDatabase(customDbPath?: string): Database.Database {
+    if (customDbPath) {
+        db = new Database(customDbPath);
+    }
+
     db.exec(`
         CREATE TABLE IF NOT EXISTS historial_transacciones (
             messageId      TEXT PRIMARY KEY,
@@ -34,14 +47,29 @@ export function inicializarDB(): void {
         }
     }
 
-    logger.info('DB', 'Base de datos inicializada (bot_memory.db)');
+    ensureSequenceTable();
+
+    logger.info('DB', `Database initialized (${customDbPath || 'bot_memory.db'})`);
+    return db;
 }
 
-export function guardarTransaccion(
+// Backward-compatible alias
+export const inicializarDB = initDatabase;
+
+/**
+ * Saves a new or updated transaction record into SQLite.
+ * Automatically enforces a FIFO capacity limit of 300 records to prevent memory bloat.
+ * 
+ * @param messageId - WhatsApp message ID of the bank receipt.
+ * @param orderNumber - Sequential order identifier (`LG-XXX`).
+ * @param incomeRow - Row index in the `Ingresos transacciones` Google Sheet.
+ * @param paymentReference - Bank payment reference number for deduplication.
+ */
+export function saveTransaction(
     messageId: string,
-    nPedido: string,
-    filaIngreso: number,
-    referenciaPago?: string | null
+    orderNumber: string,
+    incomeRow: number,
+    paymentReference?: string | null
 ): void {
     const stmt = db.prepare(`
         INSERT OR REPLACE INTO historial_transacciones
@@ -49,12 +77,12 @@ export function guardarTransaccion(
         VALUES (?, ?, ?, NULL, ?, ?)
     `);
 
-    const fechaRegistro = new Date().toISOString();
-    stmt.run(messageId, nPedido, filaIngreso, fechaRegistro, referenciaPago || null);
+    const registrationDate = new Date().toISOString();
+    stmt.run(messageId, orderNumber, incomeRow, registrationDate, paymentReference || null);
 
     const countRow = db.prepare('SELECT COUNT(*) as total FROM historial_transacciones').get() as { total: number };
-    if (countRow.total > LIMITE_REGISTROS) {
-        const exceso = countRow.total - LIMITE_REGISTROS;
+    if (countRow.total > MAX_TRANSACTION_RECORDS) {
+        const excess = countRow.total - MAX_TRANSACTION_RECORDS;
         db.prepare(`
             DELETE FROM historial_transacciones
             WHERE messageId IN (
@@ -62,35 +90,74 @@ export function guardarTransaccion(
                 ORDER BY fechaRegistro ASC, rowid ASC
                 LIMIT ?
             )
-        `).run(exceso);
-        logger.info('DB', `FIFO: eliminados ${exceso} registro(s) antiguos`);
+        `).run(excess);
+        logger.info('DB', `FIFO: purged ${excess} oldest transaction record(s)`);
     }
 
-    logger.info('DB', `Guardada: ${nPedido} (msg: ${messageId})`);
+    logger.info('DB', `Saved: ${orderNumber} (msg: ${messageId})`);
 }
 
-export function buscarTransaccion(messageId: string): Transaccion | null {
-    const row = db.prepare(`SELECT * FROM historial_transacciones WHERE messageId = ?`).get(messageId) as Transaccion | undefined;
+// Backward-compatible alias
+export const guardarTransaccion = saveTransaction;
+
+/**
+ * Looks up a transaction record by its WhatsApp message ID.
+ * 
+ * @param messageId - WhatsApp message ID.
+ * @returns Found transaction record or null.
+ */
+export function findTransactionByMessageId(messageId: string): TransactionRecord | null {
+    const row = db.prepare(`SELECT * FROM historial_transacciones WHERE messageId = ?`).get(messageId) as TransactionRecord | undefined;
     return row ?? null;
 }
 
-export function buscarTransaccionPorNPedido(nPedido: string): Transaccion | null {
-    const row = db.prepare(`SELECT * FROM historial_transacciones WHERE nPedido = ?`).get(nPedido) as Transaccion | undefined;
+// Backward-compatible alias
+export const buscarTransaccion = findTransactionByMessageId;
+
+/**
+ * Looks up a transaction record by its sequential order ID (`LG-XXX`).
+ * 
+ * @param orderNumber - Sequential order number string.
+ * @returns Found transaction record or null.
+ */
+export function findTransactionByOrderNumber(orderNumber: string): TransactionRecord | null {
+    const row = db.prepare(`SELECT * FROM historial_transacciones WHERE nPedido = ?`).get(orderNumber) as TransactionRecord | undefined;
     return row ?? null;
 }
 
-export function buscarTransaccionPorReferencia(referencia: string): Transaccion | null {
-    if (!referencia || referencia === 'N/A') return null;
-    const row = db.prepare(`SELECT * FROM historial_transacciones WHERE referenciaPago = ?`).get(referencia) as Transaccion | undefined;
+// Backward-compatible alias
+export const buscarTransaccionPorNPedido = findTransactionByOrderNumber;
+
+/**
+ * Looks up a transaction record by payment reference string to detect duplicate receipts.
+ * 
+ * @param paymentReference - Extracted payment reference string.
+ * @returns Existing transaction record if duplicate, or null if unique.
+ */
+export function findTransactionByPaymentReference(paymentReference: string): TransactionRecord | null {
+    if (!paymentReference || paymentReference === 'N/A') return null;
+    const row = db.prepare(`SELECT * FROM historial_transacciones WHERE referenciaPago = ?`).get(paymentReference) as TransactionRecord | undefined;
     return row ?? null;
 }
 
-export function actualizarFilaVenta(messageId: string, filaVenta: number): void {
-    db.prepare(`UPDATE historial_transacciones SET filaVenta = ? WHERE messageId = ?`).run(filaVenta, messageId);
-    logger.info('DB', `filaVenta=${filaVenta} para messageId=${messageId}`);
+// Backward-compatible alias
+export const buscarTransaccionPorReferencia = findTransactionByPaymentReference;
+
+/**
+ * Updates the sales row index (`filaVenta`) for a given transaction once the sales row is appended/merged in Google Sheets.
+ * 
+ * @param messageId - WhatsApp message ID.
+ * @param salesRowIndex - 1-based row number in the `Ventas` sheet.
+ */
+export function updateSalesRowIndex(messageId: string, salesRowIndex: number): void {
+    db.prepare(`UPDATE historial_transacciones SET filaVenta = ? WHERE messageId = ?`).run(salesRowIndex, messageId);
+    logger.info('DB', `filaVenta=${salesRowIndex} for messageId=${messageId}`);
 }
 
-function asegurarTablaSecuencia(): void {
+// Backward-compatible alias
+export const actualizarFilaVenta = updateSalesRowIndex;
+
+function ensureSequenceTable(): void {
     db.exec(`
         CREATE TABLE IF NOT EXISTS secuencia_pedidos (
             id    INTEGER PRIMARY KEY CHECK (id = 1),
@@ -100,31 +167,55 @@ function asegurarTablaSecuencia(): void {
     `);
 }
 
-export type SyncCallback = () => Promise<number | null>;
+export type SequenceSyncCallback = () => Promise<number | null>;
 
-let _syncCallback: SyncCallback | null = null;
-let _syncIntentado = false;
+// Backward-compatible alias
+export type SyncCallback = SequenceSyncCallback;
 
-export function registrarSyncCallback(cb: SyncCallback): void {
+let _syncCallback: SequenceSyncCallback | null = null;
+let _syncAttempted = false;
+
+/**
+ * Resets the sync attempted flag for isolated testing.
+ */
+export function _resetSyncAttemptForTesting(): void {
+    _syncAttempted = false;
+}
+
+/**
+ * Registers an asynchronous callback function (e.g. querying Google Sheets) to sync the latest order number on startup.
+ * 
+ * @param cb - Async callback returning the highest order number found in external storage.
+ */
+export function registerSequenceSyncCallback(cb: SequenceSyncCallback): void {
     _syncCallback = cb;
 }
 
-export async function generarSiguienteNPedido(): Promise<string> {
-    asegurarTablaSecuencia();
+// Backward-compatible alias
+export const registrarSyncCallback = registerSequenceSyncCallback;
 
-    if (!_syncIntentado && _syncCallback) {
-        _syncIntentado = true;
+/**
+ * Atomically increments the order sequence counter and returns the next formatted order identifier (e.g. `LG-001`).
+ * Triggers the sequence sync callback on its first invocation if registered.
+ * 
+ * @returns Next sequential order identifier (e.g. `LG-042`).
+ */
+export async function generateNextOrderNumber(): Promise<string> {
+    ensureSequenceTable();
+
+    if (!_syncAttempted && _syncCallback) {
+        _syncAttempted = true;
         try {
-            const ultimo = await _syncCallback();
-            if (ultimo !== null) {
-                const valorActual = obtenerValorSecuencia();
-                if (ultimo > valorActual) {
-                    establecerValorSecuencia(ultimo);
-                    logger.info('DB', `Secuencia sincronizada desde callback: ${valorActual} → ${ultimo}`);
+            const latest = await _syncCallback();
+            if (latest !== null) {
+                const currentValue = getSequenceValue();
+                if (latest > currentValue) {
+                    setSequenceValue(latest);
+                    logger.info('DB', `Sequence synced from callback: ${currentValue} → ${latest}`);
                 }
             }
         } catch (err) {
-            logger.error('DB', 'Error en sync callback de secuencia:', err);
+            logger.error('DB', 'Error in sequence sync callback:', err);
         }
     }
 
@@ -136,19 +227,48 @@ export async function generarSiguienteNPedido(): Promise<string> {
     return `LG-${String(row.valor).padStart(3, '0')}`;
 }
 
-export function obtenerValorSecuencia(): number {
-    asegurarTablaSecuencia();
+// Backward-compatible alias
+export const generarSiguienteNPedido = generateNextOrderNumber;
+
+/**
+ * Retrieves the current counter value of the order sequence.
+ * 
+ * @returns Current numerical sequence counter.
+ */
+export function getSequenceValue(): number {
+    ensureSequenceTable();
     const row = db.prepare(`SELECT valor FROM secuencia_pedidos WHERE id = 1`).get() as { valor: number };
     return row.valor;
 }
 
-export function establecerValorSecuencia(valor: number): void {
-    asegurarTablaSecuencia();
-    db.prepare(`UPDATE secuencia_pedidos SET valor = ? WHERE id = 1`).run(valor);
-    logger.info('DB', `Secuencia establecida a ${valor}`);
+// Backward-compatible alias
+export const obtenerValorSecuencia = getSequenceValue;
+
+/**
+ * Sets the order sequence counter to a specific integer value.
+ * 
+ * @param value - Integer to set the sequence counter to.
+ */
+export function setSequenceValue(value: number): void {
+    ensureSequenceTable();
+    db.prepare(`UPDATE secuencia_pedidos SET valor = ? WHERE id = 1`).run(value);
+    logger.info('DB', `Sequence set to ${value}`);
 }
 
-export function cerrarDB(): void {
-    db.close();
-    logger.info('DB', 'SQLite cerrada correctamente');
+// Backward-compatible alias
+export const establecerValorSecuencia = setSequenceValue;
+
+/**
+ * Safely closes the SQLite database connection.
+ */
+export function closeDatabase(): void {
+    try {
+        db.close();
+        logger.info('DB', 'SQLite database closed cleanly');
+    } catch {
+        // Already closed or not open
+    }
 }
+
+// Backward-compatible alias
+export const cerrarDB = closeDatabase;

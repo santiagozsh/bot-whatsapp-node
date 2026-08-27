@@ -1,19 +1,19 @@
 import { initializeWhatsApp, whatsappClient, whatsappDestroy, verificarVersionBaileys } from './services/whatsapp.service';
-import { inicializarDB, cerrarDB, obtenerValorSecuencia, establecerValorSecuencia } from './services/memory.service';
+import { initDatabase, closeDatabase, getSequenceValue, setSequenceValue } from './services/memory.service';
 import { obtenerUltimoNPedido } from './services/sheets.service';
 import { clasificarPedidosDelDia } from './services/classifier.service';
 import { logger } from './utils/logger';
 
 async function iniciarServidor() {
     logger.info('INIT', 'Iniciando el servidor...');
-    inicializarDB();
+    initDatabase();
 
     try {
         const ultimo = await obtenerUltimoNPedido();
         if (ultimo !== null) {
-            const valorActual = obtenerValorSecuencia();
+            const valorActual = getSequenceValue();
             if (ultimo > valorActual) {
-                establecerValorSecuencia(ultimo);
+                setSequenceValue(ultimo);
                 logger.info('DB', `Secuencia sincronizada desde Sheets: ${valorActual} → ${ultimo}`);
             }
         }
@@ -59,7 +59,7 @@ const gracefulShutdown = async (signal: string) => {
             await whatsappDestroy();
             logger.info('SHUTDOWN', 'Cliente WhatsApp cerrado');
         }
-        cerrarDB();
+        closeDatabase();
     } catch (err) {
         logger.error('SHUTDOWN', 'Error durante cierre:', err);
     }
@@ -76,7 +76,7 @@ process.on('unhandledRejection', (reason) => {
 });
 process.on('uncaughtException', (error) => {
     logger.error('PROCESS', 'Uncaught exception — cerrando:', error);
-    cerrarDB();
+    closeDatabase();
     if (whatsappDestroy) {
         whatsappDestroy().catch(() => {});
     }

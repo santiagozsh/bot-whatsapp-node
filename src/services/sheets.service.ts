@@ -2,7 +2,7 @@ import { google } from 'googleapis';
 import * as path from 'path';
 import * as dotenv from 'dotenv';
 import { formatDate, formatAccountNumber, executeWithRetry } from '../utils/helpers';
-import { generarSiguienteNPedido, registrarSyncCallback } from './memory.service';
+import { generateNextOrderNumber, registerSequenceSyncCallback } from './memory.service';
 import { getDepartment } from '../utils/colombia.data';
 import { logger } from '../utils/logger';
 import type { DatosIngreso, DatosCliente, DatosIngresoParcial } from '../types';
@@ -48,7 +48,7 @@ export const escribirFilaEnExcel = async (datosJSON: DatosIngreso): Promise<{ nP
         return await executeWithRetry(async () => {
             const sheets = await obtenerSheets();
 
-            const nuevoId = await generarSiguienteNPedido();
+            const nuevoId = await generateNextOrderNumber();
 
             const fechaLimpia = formatDate(datosJSON.fecha);
             const cuentaLimpia = formatAccountNumber(datosJSON.cuentaDestino);
@@ -335,6 +335,6 @@ export const leerVentas = async (): Promise<FilaVenta[]> => {
     }
 };
 
-registrarSyncCallback(obtenerUltimoNPedido);
+registerSequenceSyncCallback(obtenerUltimoNPedido);
 
 

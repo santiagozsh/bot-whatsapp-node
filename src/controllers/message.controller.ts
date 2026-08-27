@@ -1,6 +1,6 @@
 import { extraerDatosDesdeTextoOCR, extraerDatosCliente, optimizarImagenParaOCR } from '../services/ai.service';
 import { escribirFilaEnExcel, escribirFilaVenta, mergeFilaVenta, actualizarFilaIngreso } from '../services/sheets.service';
-import { guardarTransaccion, actualizarFilaVenta, buscarTransaccion, buscarTransaccionPorReferencia, buscarTransaccionPorNPedido } from '../services/memory.service';
+import { saveTransaction, updateSalesRowIndex, findTransactionByMessageId, findTransactionByPaymentReference, findTransactionByOrderNumber } from '../services/memory.service';
 import { extraerTextoConVisionMejorado } from '../services/vision.service';
 import { formatDate, normalizeOcrText, isUsefulText, detectBankByColor } from '../utils/helpers';
 import { logger } from '../utils/logger';
@@ -132,7 +132,7 @@ async function escribirOMergearVenta(
     if (filaVentaExistente === null) {
         const filaVenta = await escribirFilaVenta(datosCliente, nPedido, fechaFormateada);
         if (filaVenta > 0) {
-            actualizarFilaVenta(messageId, filaVenta);
+            updateSalesRowIndex(messageId, filaVenta);
         }
     } else {
         await mergeFilaVenta(filaVentaExistente, datosCliente);
@@ -160,7 +160,7 @@ async function finalizarTransaccionAnterior(chatId: string): Promise<void> {
         return;
     }
 
-    const t = buscarTransaccion(transaccion.messageId);
+    const t = findTransactionByMessageId(transaccion.messageId);
     if (datosCliente.vendedor && datosCliente.vendedor !== 'N/A' && t) {
         await actualizarFilaIngreso(t.filaIngreso, { vendedor: datosCliente.vendedor });
     }
@@ -242,7 +242,7 @@ async function procesarComprobante(
     }
 
     if (datosExtraidos.referenciaDePago && datosExtraidos.referenciaDePago !== 'N/A') {
-        const existente = buscarTransaccionPorReferencia(datosExtraidos.referenciaDePago);
+        const existente = findTransactionByPaymentReference(datosExtraidos.referenciaDePago);
         if (existente) {
             logger.info('IMAGEN', `Referencia duplicada: ${datosExtraidos.referenciaDePago} = ${existente.nPedido}`);
             return;
@@ -264,7 +264,7 @@ async function registrarComprobante(
 
     const { nPedido, filaIngreso } = resultado;
 
-    guardarTransaccion(ctx.messageId, nPedido, filaIngreso, datosExtraidos.referenciaDePago || null);
+    saveTransaction(ctx.messageId, nPedido, filaIngreso, datosExtraidos.referenciaDePago || null);
 
     transaccionActualPorChat.set(ctx.chatId, { nPedido, messageId: ctx.messageId, fecha: datosExtraidos.fecha });
 
@@ -312,7 +312,7 @@ async function procesarTextoConReply(ctx: MensajeEntrante): Promise<void> {
         const datosCliente = await extraerDatosCliente(ctx.body);
         if (!datosCliente) return;
 
-        const t = buscarTransaccion(transaccionActual.messageId);
+        const t = findTransactionByMessageId(transaccionActual.messageId);
         if (t && datosCliente.vendedor && datosCliente.vendedor !== 'N/A') {
             await actualizarFilaIngreso(t.filaIngreso, { vendedor: datosCliente.vendedor });
         }
@@ -334,21 +334,21 @@ async function procesarTextoConReply(ctx: MensajeEntrante): Promise<void> {
         const textoCitado = ctx.quotedBody || '';
         const matchNPedido = textoCitado.match(/LG-\d+/);
         if (matchNPedido && matchNPedido[0]) {
-            const t = buscarTransaccionPorNPedido(matchNPedido[0]);
+            const t = findTransactionByOrderNumber(matchNPedido[0]);
             if (t) {
                 await actualizarFilaIngreso(t.filaIngreso, { [campo]: valor });
                 return;
             }
         }
 
-        const t = buscarTransaccion(quotedId);
+        const t = findTransactionByMessageId(quotedId);
         if (t) {
             await actualizarFilaIngreso(t.filaIngreso, { [campo]: valor });
             return;
         }
     }
 
-    const transaccion = buscarTransaccion(quotedId);
+    const transaccion = findTransactionByMessageId(quotedId);
     if (transaccion) {
         logger.info('REPLY', `Reply tardío para ${transaccion.nPedido}`);
         const datosCliente = await extraerDatosCliente(ctx.body);
@@ -378,7 +378,7 @@ export const procesarMensajeEntrante = async (ctx: MensajeEntrante) => {
             }
 
             if (ctx.hasQuotedMsg && ctx.quotedMsgId) {
-                const transaccion = buscarTransaccion(ctx.quotedMsgId);
+                const transaccion = findTransactionByMessageId(ctx.quotedMsgId);
                 if (transaccion) {
                     logger.info('REPLY', `Imagen reply descartada para ${transaccion.nPedido}`);
                     return;
