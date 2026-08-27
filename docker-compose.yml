@@ -1,18 +1,17 @@
 services:
   app:
     container_name: node-bot-dev
-    build: .
+    image: elsantiagod/bot-app-dev:latest
     restart: unless-stopped
     volumes:
       - ./auth_info_dev:/app/auth_info_dev
       - ./bot_memory_dev.db:/app/bot_memory_dev.db
-      - ./google-keys.json:/app/google-keys.json:ro
     environment:
       AUTH_FOLDER_PATH: /app/auth_info_dev
       DB_PATH: /app/bot_memory_dev.db
       OPENAI_API_KEY: ${OPENAI_API_KEY}
-      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      OPENAI_MODEL: ${OPENAI_MODEL}
       GOOGLE_SHEETS_ID: ${GOOGLE_SHEETS_ID}
-      SHEETS_VENTAS_NOMBRE: ${SHEETS_VENTAS_NOMBRE:-Ventas}
-      GRUPO_AUTORIZADO: ${GRUPO_AUTORIZADO_DEV:-${GRUPO_AUTORIZADO:-Dev_Testing}}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SHEETS_VENTAS_NOMBRE: ${SHEETS_VENTAS_NOMBRE}
+      GRUPO_AUTORIZADO: ${GRUPO_AUTORIZADO_DEV}
+      LOG_LEVEL: ${LOG_LEVEL}

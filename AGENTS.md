@@ -57,3 +57,13 @@ The single source of truth for work is **GitHub Issues** on this repository (`gh
 - **Platform Roadmap:** Refer to `docs/roadmap.md` for operational milestones (Phases 0–5).
 - **Architectural Decisions:** Refer to `docs/adr/` before introducing breaking architectural shifts.
 - **Official Library Docs:** When consulting third-party library documentation (OpenAI, Baileys, etc.), utilize `context7` tools where available.
+
+---
+
+## 5. Strict Git & Version Control Directives (Zero Write Operations)
+
+- **NEVER run `git add`:** The agent is strictly forbidden from staging files. No `git add .`, no `git add -A`, and no individual file staging.
+- **NEVER run `git commit`:** The agent must never create or amend commits.
+- **NEVER run `git push`:** The agent must never push to any remote repository.
+- **Allowed Git commands (Read-Only only):** `git status`, `git diff`, `git log --oneline`.
+- **Workflow:** When the agent finishes code edits and verification tests, it must present the list of modified files and leave all staging (`git add`), committing, and pushing entirely to the user.
