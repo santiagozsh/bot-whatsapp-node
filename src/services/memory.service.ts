@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { logger } from '../utils/logger';
 
-let db: Database.Database = new Database('bot_memory.db');
+let db: Database.Database = new Database(process.env.DB_PATH || 'bot_memory.db');
 
 export interface TransactionRecord {
     messageId: string;
@@ -24,8 +24,9 @@ const MAX_TRANSACTION_RECORDS = 300;
  * @param customDbPath - Optional database file path or ':memory:' for isolated testing.
  */
 export function initDatabase(customDbPath?: string): Database.Database {
-    if (customDbPath) {
-        db = new Database(customDbPath);
+    const targetDbPath = customDbPath || process.env.DB_PATH || 'bot_memory.db';
+    if (customDbPath || process.env.DB_PATH) {
+        db = new Database(targetDbPath);
     }
 
     db.exec(`

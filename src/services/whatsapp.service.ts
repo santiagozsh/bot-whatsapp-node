@@ -12,8 +12,8 @@ export let whatsappClient: Awaited<ReturnType<typeof makeWASocket>> | null = nul
 export let whatsappDestroy: (() => Promise<void>) | null = null;
 
 const authorizedGroupsCache = new Map<string, string>();
-const CREDS_FILE_PATH = './auth_info/creds.json';
-const AUTH_FOLDER_PATH = './auth_info';
+const AUTH_FOLDER_PATH = process.env.AUTH_FOLDER_PATH || './auth_info';
+const CREDS_FILE_PATH = path.join(AUTH_FOLDER_PATH, 'creds.json');
 
 // ── Robust Reconnection State ────────────────────────────────
 
