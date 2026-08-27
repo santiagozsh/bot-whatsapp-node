@@ -1,7 +1,7 @@
 import { initializeWhatsApp, whatsappClient, whatsappDestroy, verificarVersionBaileys } from './services/whatsapp.service';
 import { initDatabase, closeDatabase, getSequenceValue, setSequenceValue } from './services/memory.service';
 import { getLatestOrderNumberFromSheets } from './services/sheets.service';
-import { clasificarPedidosDelDia } from './services/classifier.service';
+import { classifyDailyOrders } from './services/classifier.service';
 import { logger } from './utils/logger';
 
 async function iniciarServidor() {
@@ -38,8 +38,8 @@ const msHastaMedianoche = (() => {
 })();
 
 setTimeout(() => {
-    clasificarPedidosDelDia();
-    setInterval(clasificarPedidosDelDia, 24 * 60 * 60 * 1000);
+    classifyDailyOrders();
+    setInterval(classifyDailyOrders, 24 * 60 * 60 * 1000);
 }, msHastaMedianoche);
 
 let isShuttingDown = false;

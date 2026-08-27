@@ -1,59 +1,102 @@
 import { readIncomeRows, readSalesRows, updateIncomeRow } from './sheets.service';
 import { logger } from '../utils/logger';
-import type { SalesRow } from './sheets.service';
+import type { IncomeRow, SalesRow } from './sheets.service';
 
-const MESES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+const SPANISH_MONTHS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
 
-const formatearFechaHoy = (): string => {
-    const hoy = new Date();
-    const dia = hoy.getDate();
-    const mes = MESES[hoy.getMonth()];
-    const anio = hoy.getFullYear();
-    return `${dia}-${mes}-${anio}`;
+/**
+ * Returns a date string formatted as "D-Mes-YYYY" matching the Google Sheets date schema.
+ * 
+ * @param date - Optional date instance (defaults to current system time).
+ */
+export const getFormattedTodayDate = (date: Date = new Date()): string => {
+    const day = date.getDate();
+    const month = SPANISH_MONTHS[date.getMonth()];
+    const year = date.getFullYear();
+    return `${day}-${month}-${year}`;
 };
 
-const parsearPrecio = (precio: string): number => {
-    const limpio = precio.replace(/[^0-9]/g, '');
-    return parseInt(limpio, 10) || 0;
+// Backward-compatible alias
+export const formatearFechaHoy = getFormattedTodayDate;
+
+/**
+ * Parses numeric price integers from currency strings (e.g. "$165.000" -> 165000).
+ * 
+ * @param priceString - Raw price string from income record.
+ */
+export const parseNumericPrice = (priceString: string): number => {
+    const cleanNumber = priceString.replace(/[^0-9]/g, '');
+    return parseInt(cleanNumber, 10) || 0;
 };
 
-export const clasificarPedidosDelDia = async (): Promise<void> => {
-    logger.info('CLASSIFIER', 'Iniciando clasificación diaria...');
+// Backward-compatible alias
+export const parsearPrecio = parseNumericPrice;
 
-    const [ingresos, ventas] = await Promise.all([readIncomeRows(), readSalesRows()]);
+const WHOLESALE_QUANTITY_THRESHOLD = 3;
+const WHOLESALE_PRICE_THRESHOLD = 250000;
 
-    const ventasPorPedido = new Map<string, SalesRow>();
-    for (const venta of ventas) {
-        if (venta.nPedido) {
-            ventasPorPedido.set(venta.nPedido, venta);
+/**
+ * Determines whether an order is wholesale ("Pedido al por mayor") or retail ("Pedido al por menor").
+ * Evaluates total unit quantity (watches + accessories >= 3) if sales row is populated.
+ * Falls back to price threshold (>= $250,000 COP) if sales row is missing.
+ * 
+ * @param incomeRecord - The income transaction record.
+ * @param salesRecord - Optional linked sales row record.
+ */
+export function determineOrderClassification(
+    incomeRecord: IncomeRow,
+    salesRecord?: SalesRow
+): 'Pedido al por mayor' | 'Pedido al por menor' {
+    if (salesRecord) {
+        const totalUnits = salesRecord.cantidadRelojes + salesRecord.cantidadOtros;
+        return totalUnits >= WHOLESALE_QUANTITY_THRESHOLD
+            ? 'Pedido al por mayor'
+            : 'Pedido al por menor';
+    }
+
+    const price = parseNumericPrice(incomeRecord.precioCompra);
+    return price >= WHOLESALE_PRICE_THRESHOLD
+        ? 'Pedido al por mayor'
+        : 'Pedido al por menor';
+}
+
+/**
+ * Nightly cron worker that inspects all income transactions recorded for the current day,
+ * evaluates wholesale vs retail eligibility, and idempotently updates Column D (Descripción)
+ * in Google Sheets if the classification differs from the default.
+ */
+export const classifyDailyOrders = async (): Promise<void> => {
+    logger.info('CLASSIFIER', 'Starting daily order classification worker...');
+
+    const [incomeRows, salesRows] = await Promise.all([readIncomeRows(), readSalesRows()]);
+
+    const salesByOrderId = new Map<string, SalesRow>();
+    for (const sale of salesRows) {
+        if (sale.nPedido) {
+            salesByOrderId.set(sale.nPedido, sale);
         }
     }
 
-    const fechaHoy = formatearFechaHoy();
-    const pedidosHoy = ingresos.filter((ing) => ing.fecha === fechaHoy);
+    const todayDateString = getFormattedTodayDate();
+    const todayOrders = incomeRows.filter((ing) => ing.fecha === todayDateString);
 
-    logger.info('CLASSIFIER', `${pedidosHoy.length} pedidos del día (${fechaHoy}) a revisar`);
+    logger.info('CLASSIFIER', `${todayOrders.length} order(s) found for today (${todayDateString}) to review`);
 
-    let actualizados = 0;
+    let updatedCount = 0;
 
-    for (const ingreso of pedidosHoy) {
-        const venta = ventasPorPedido.get(ingreso.nPedido);
-        let clasificacion: string;
+    for (const income of todayOrders) {
+        const salesRecord = salesByOrderId.get(income.nPedido);
+        const classification = determineOrderClassification(income, salesRecord);
 
-        if (venta) {
-            const total = venta.cantidadRelojes + venta.cantidadOtros;
-            clasificacion = total >= 3 ? 'Pedido al por mayor' : 'Pedido al por menor';
-        } else {
-            const precio = parsearPrecio(ingreso.precioCompra);
-            clasificacion = precio >= 250000 ? 'Pedido al por mayor' : 'Pedido al por menor';
-        }
-
-        if (ingreso.descripcion !== clasificacion) {
-            await updateIncomeRow(ingreso.fila, { descripcion: clasificacion });
-            logger.info('CLASSIFIER', `${ingreso.nPedido}: "${ingreso.descripcion}" → "${clasificacion}"`);
-            actualizados++;
+        if (income.descripcion !== classification) {
+            await updateIncomeRow(income.fila, { descripcion: classification });
+            logger.info('CLASSIFIER', `${income.nPedido}: "${income.descripcion}" → "${classification}"`);
+            updatedCount++;
         }
     }
 
-    logger.info('CLASSIFIER', `Clasificación diaria completada. ${actualizados} pedidos actualizados.`);
+    logger.info('CLASSIFIER', `Daily classification completed: ${updatedCount} order(s) updated.`);
 };
+
+// Backward-compatible alias
+export const clasificarPedidosDelDia = classifyDailyOrders;
