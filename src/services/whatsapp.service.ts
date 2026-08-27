@@ -11,114 +11,151 @@ import { logger } from '../utils/logger';
 export let whatsappClient: Awaited<ReturnType<typeof makeWASocket>> | null = null;
 export let whatsappDestroy: (() => Promise<void>) | null = null;
 
-const gruposCache = new Map<string, string>();
-const RUTA_CREDS = './auth_info/creds.json';
-const RUTA_AUTH = './auth_info';
+const authorizedGroupsCache = new Map<string, string>();
+const CREDS_FILE_PATH = './auth_info/creds.json';
+const AUTH_FOLDER_PATH = './auth_info';
 
-// ── Estado de reconexión robusta ──────────────────────────────
+// ── Robust Reconnection State ────────────────────────────────
 
-const RETARDO_BASE_MS = 2000;
-const RETARDO_MAX_MS = 32000;
-const TIMEOUT_SOCKET_MS = 30000;
+const BASE_RECONNECT_DELAY_MS = 2000;
+const MAX_RECONNECT_DELAY_MS = 32000;
+const SOCKET_HANDSHAKE_TIMEOUT_MS = 30000;
 
-let intentoReconexion = 0;
-let timerReconexion: NodeJS.Timeout | null = null;
-let timeoutSocket: NodeJS.Timeout | null = null;
-let desconexionProgramada = false;
-let apagadoManual = false;
+let reconnectAttemptCount = 0;
+let reconnectTimer: NodeJS.Timeout | null = null;
+let socketHandshakeTimer: NodeJS.Timeout | null = null;
+let isReconnectionScheduled = false;
+let isManualShutdown = false;
 
-function retardoBackoff(): number {
-    const retardo = Math.min(RETARDO_BASE_MS * 2 ** intentoReconexion, RETARDO_MAX_MS);
-    intentoReconexion++;
-    return retardo;
+/**
+ * Resets the reconnect attempt counter for isolated testing.
+ */
+export function _resetReconnectAttemptsForTesting(): void {
+    reconnectAttemptCount = 0;
 }
 
-function limpiarSocket(sock: Awaited<ReturnType<typeof makeWASocket>>): void {
+/**
+ * Calculates exponential backoff reconnect delay (2s -> 4s -> 8s -> 16s -> 32s max).
+ */
+export function calculateReconnectDelay(): number {
+    const delay = Math.min(BASE_RECONNECT_DELAY_MS * (2 ** reconnectAttemptCount), MAX_RECONNECT_DELAY_MS);
+    reconnectAttemptCount++;
+    return delay;
+}
+
+// Backward-compatible alias
+export const retardoBackoff = calculateReconnectDelay;
+
+/**
+ * Safely removes all event listeners and ends the Baileys WebSocket connection.
+ */
+export function cleanupSocket(sock: Awaited<ReturnType<typeof makeWASocket>>): void {
     try {
         sock.ev.removeAllListeners('connection.update');
         sock.ev.removeAllListeners('messages.upsert');
         sock.ev.removeAllListeners('creds.update');
         sock.end(undefined);
     } catch (error) {
-        logger.error('RECONEXIÓN', 'Error limpiando socket:', error);
+        logger.error('RECONNECT', 'Error cleaning up Baileys socket:', error);
     }
 }
 
-function cancelarTimeoutSocket(): void {
-    if (timeoutSocket) {
-        clearTimeout(timeoutSocket);
-        timeoutSocket = null;
+// Backward-compatible alias
+export const limpiarSocket = cleanupSocket;
+
+function cancelSocketHandshakeTimeout(): void {
+    if (socketHandshakeTimer) {
+        clearTimeout(socketHandshakeTimer);
+        socketHandshakeTimer = null;
     }
 }
 
-function programarTimeoutSocket(sock: Awaited<ReturnType<typeof makeWASocket>>): void {
-    cancelarTimeoutSocket();
-    timeoutSocket = setTimeout(() => {
-        timeoutSocket = null;
-        logger.warn('RECONEXIÓN', `Socket sin conexión abierta ni QR en ${TIMEOUT_SOCKET_MS / 1000}s — reiniciando`);
-        limpiarSocket(sock);
-        programarReconexion();
-    }, TIMEOUT_SOCKET_MS);
+function scheduleSocketHandshakeTimeout(sock: Awaited<ReturnType<typeof makeWASocket>>): void {
+    cancelSocketHandshakeTimeout();
+    socketHandshakeTimer = setTimeout(() => {
+        socketHandshakeTimer = null;
+        logger.warn('RECONNECT', `Socket produced no open connection nor QR code within ${SOCKET_HANDSHAKE_TIMEOUT_MS / 1000}s — resetting socket`);
+        cleanupSocket(sock);
+        scheduleReconnection();
+    }, SOCKET_HANDSHAKE_TIMEOUT_MS);
 }
 
-function borrarCredenciales(): void {
+/**
+ * Deletes all stored Multi-Device authentication keys in `./auth_info` to force a clean QR re-scan.
+ */
+export function clearSavedCredentials(): void {
     try {
-        if (fs.existsSync(RUTA_AUTH)) {
-            for (const archivo of fs.readdirSync(RUTA_AUTH)) {
-                fs.rmSync(path.join(RUTA_AUTH, archivo), { recursive: true, force: true });
+        if (fs.existsSync(AUTH_FOLDER_PATH)) {
+            for (const file of fs.readdirSync(AUTH_FOLDER_PATH)) {
+                fs.rmSync(path.join(AUTH_FOLDER_PATH, file), { recursive: true, force: true });
             }
-            logger.info('RECONEXIÓN', 'Credenciales borradas — el próximo intento pedirá QR');
+            logger.info('RECONNECT', 'Saved credentials cleared — next connection attempt will generate a fresh QR code');
         }
     } catch (error) {
-        logger.error('RECONEXIÓN', 'Error borrando credenciales:', error);
+        logger.error('RECONNECT', 'Error clearing credentials from auth directory:', error);
     }
 }
 
-function programarReconexion(): void {
-    if (desconexionProgramada) return;
-    desconexionProgramada = true;
+// Backward-compatible alias
+export const borrarCredenciales = clearSavedCredentials;
 
-    const retardo = retardoBackoff();
-    logger.info('RECONEXIÓN', `Reintentando en ${(retardo / 1000).toFixed(0)}s (intento ${intentoReconexion})...`);
+function scheduleReconnection(): void {
+    if (isReconnectionScheduled) return;
+    isReconnectionScheduled = true;
 
-    timerReconexion = setTimeout(() => {
-        timerReconexion = null;
-        desconexionProgramada = false;
-        initializeWhatsApp().catch(error => {
-            logger.error('RECONEXIÓN', 'Error al reconectar:', error);
+    const delay = calculateReconnectDelay();
+    logger.info('RECONNECT', `Retrying connection in ${(delay / 1000).toFixed(0)}s (attempt ${reconnectAttemptCount})...`);
+
+    reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        isReconnectionScheduled = false;
+        initializeWhatsAppClient().catch(error => {
+            logger.error('RECONNECT', 'Error during automatic reconnection attempt:', error);
         });
-    }, retardo);
+    }, delay);
 }
 
-// ── Verificación de versión de Baileys ─────────────────────────
+// ── Baileys Version Checking ─────────────────────────────────
 
-function extraerNumeroVersion(version: string): number {
+/**
+ * Parses semver and release candidate versions into a comparable integer.
+ */
+export function parseVersionNumber(version: string): number {
     const base = parseInt((version.split('-')[0] ?? '').replace(/\./g, ''), 10) || 0;
     const rc = version.match(/rc(\d+)/);
     return base * 100000 + (rc?.[1] ? parseInt(rc[1], 10) : 0);
 }
 
-export async function verificarVersionBaileys(): Promise<void> {
+// Backward-compatible alias
+export const extraerNumeroVersion = parseVersionNumber;
+
+/**
+ * Checks npm registry for updates to `@whiskeysockets/baileys` to alert about WhatsApp protocol shifts.
+ */
+export async function checkBaileysVersion(): Promise<void> {
     try {
-        const rutaIndex = require.resolve('@whiskeysockets/baileys');
-        const rutaPkg = path.resolve(path.dirname(rutaIndex), '..', 'package.json');
-        const instalada = (JSON.parse(fs.readFileSync(rutaPkg, 'utf8')) as { version: string }).version;
+        const indexFile = require.resolve('@whiskeysockets/baileys');
+        const pkgFile = path.resolve(path.dirname(indexFile), '..', 'package.json');
+        const installedVersion = (JSON.parse(fs.readFileSync(pkgFile, 'utf8')) as { version: string }).version;
 
-        const resp = await fetch('https://registry.npmjs.org/@whiskeysockets/baileys/latest');
-        if (!resp.ok) return;
-        const ultima = (await resp.json() as { version: string }).version;
+        const response = await fetch('https://registry.npmjs.org/@whiskeysockets/baileys/latest');
+        if (!response.ok) return;
+        const latestVersion = (await response.json() as { version: string }).version;
 
-        if (extraerNumeroVersion(ultima) > extraerNumeroVersion(instalada)) {
-            logger.warn('VERSIÓN', `Hay versión nueva de Baileys: ${instalada} → ${ultima}. Actualiza con: npm install @whiskeysockets/baileys@${ultima}`);
+        if (parseVersionNumber(latestVersion) > parseVersionNumber(installedVersion)) {
+            logger.warn('VERSION', `Newer Baileys version available: ${installedVersion} → ${latestVersion}. Update via: npm install @whiskeysockets/baileys@${latestVersion}`);
         }
     } catch {
-        // silencioso: sin red o error del registro no bloquea el arranque
+        // Non-blocking: network failure or registry timeout is safely ignored at boot
     }
 }
 
-// ── Diagnóstico de desconexión ─────────────────────────────────
+// Backward-compatible alias
+export const verificarVersionBaileys = checkBaileysVersion;
 
-function extraerStatusDelError(error: unknown): number | null {
+// ── Disconnection Diagnostics ────────────────────────────────
+
+function extractErrorStatusCode(error: unknown): number | null {
     if (!error || typeof error !== 'object') return null;
     const output = (error as Record<string, unknown>).output;
     if (!output || typeof output !== 'object') return null;
@@ -126,15 +163,18 @@ function extraerStatusDelError(error: unknown): number | null {
     return typeof statusCode === 'number' ? statusCode : null;
 }
 
-function describirRazonDesconexion(error: unknown): string {
-    const statusCode = extraerStatusDelError(error);
+/**
+ * Returns human-readable diagnostic descriptions for WhatsApp WebSocket disconnect codes.
+ */
+export function describeDisconnectReason(error: unknown): string {
+    const statusCode = extractErrorStatusCode(error);
     if (statusCode === null) return 'sin error (cierre normal)';
 
-    const nombreEnum = DisconnectReason[statusCode] as string | undefined;
-    const base = nombreEnum ? `${statusCode} (${nombreEnum})` : `${statusCode} (desconocido)`;
-    const mensaje = (error as Error | undefined)?.message || '(sin mensaje)';
+    const enumName = DisconnectReason[statusCode] as string | undefined;
+    const base = enumName ? `${statusCode} (${enumName})` : `${statusCode} (desconocido)`;
+    const message = (error as Error | undefined)?.message || '(sin mensaje)';
 
-    const interpretaciones: Record<number, string> = {
+    const interpretations: Record<number, string> = {
         [DisconnectReason.loggedOut]: 'SESIÓN REVOCADA: el teléfono mató/desplazó la sesión',
         [DisconnectReason.connectionReplaced]: 'SESIÓN DESPLAZADA: límite de 4 dispositivos o socket duplicado',
         [DisconnectReason.connectionClosed]: 'CONEXIÓN CERRADA por WhatsApp',
@@ -146,10 +186,13 @@ function describirRazonDesconexion(error: unknown): string {
         [DisconnectReason.multideviceMismatch]: 'CONFLICTO DE MULTIDISPOSITIVO',
         405: 'REGISTRO RECHAZADO (rate limit/throttle de WhatsApp)',
     };
-    const interpretacion = interpretaciones[statusCode] || '';
+    const interpretation = interpretations[statusCode] || '';
 
-    return `código ${base} | mensaje: "${mensaje}" | ${interpretacion}`;
+    return `código ${base} | mensaje: "${message}" | ${interpretation}`;
 }
+
+// Backward-compatible alias
+export const describirRazonDesconexion = describeDisconnectReason;
 
 function isLoggedOut(error: unknown): boolean {
     if (!error || typeof error !== 'object') return false;
@@ -159,27 +202,30 @@ function isLoggedOut(error: unknown): boolean {
     return (output as Record<string, unknown>).statusCode === DisconnectReason.loggedOut;
 }
 
-async function cargarGruposAutorizados(sock: Awaited<ReturnType<typeof makeWASocket>>): Promise<void> {
+async function loadAuthorizedGroups(sock: Awaited<ReturnType<typeof makeWASocket>>): Promise<void> {
     try {
-        const nombresBuscados = (process.env.GRUPO_AUTORIZADO || 'Contabilidad')
+        const targetGroupNames = (process.env.GRUPO_AUTORIZADO || 'Contabilidad')
             .split(',')
             .map(g => g.trim())
             .filter(Boolean);
 
         const groups = await sock.groupFetchAllParticipating();
         for (const [jid, metadata] of Object.entries(groups)) {
-            if (nombresBuscados.includes(metadata.subject)) {
-                gruposCache.set(jid, metadata.subject);
+            if (targetGroupNames.includes(metadata.subject)) {
+                authorizedGroupsCache.set(jid, metadata.subject);
             }
         }
 
-        logger.info('CACHE', `Grupos autorizados: ${gruposCache.size}`);
+        logger.info('CACHE', `Authorized groups cached: ${authorizedGroupsCache.size}`);
     } catch (error) {
-        logger.error('CACHE', 'Error al cargar grupos:', error);
+        logger.error('CACHE', 'Error fetching authorized groups:', error);
     }
 }
 
-function extraerCuerpo(msg: WAMessage): string {
+/**
+ * Extracts raw textual body content from various Baileys message structures.
+ */
+export function extractMessageBody(msg: WAMessage): string {
     const m = msg.message;
     if (!m) return '';
     if (m.conversation) return m.conversation;
@@ -187,13 +233,19 @@ function extraerCuerpo(msg: WAMessage): string {
     return '';
 }
 
-export const initializeWhatsApp = async (): Promise<void> => {
-    if (timerReconexion) {
-        clearTimeout(timerReconexion);
-        timerReconexion = null;
+// Backward-compatible alias
+export const extraerCuerpo = extractMessageBody;
+
+/**
+ * Initializes the Baileys WebSocket client connection with Multi-Device file auth state.
+ */
+export const initializeWhatsAppClient = async (): Promise<void> => {
+    if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
     }
 
-    const { state, saveCreds } = await useMultiFileAuthState(RUTA_AUTH);
+    const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER_PATH);
 
     const sock = makeWASocket({
         auth: state,
@@ -201,62 +253,62 @@ export const initializeWhatsApp = async (): Promise<void> => {
         logger: pino({ level: process.env.LOG_BAILEYS === 'info' ? 'info' : 'warn' }),
     });
 
-    const socketAnterior = whatsappClient;
+    const previousSocket = whatsappClient;
     whatsappClient = sock;
     whatsappDestroy = async () => {
-        apagadoManual = true;
-        cancelarTimeoutSocket();
+        isManualShutdown = true;
+        cancelSocketHandshakeTimeout();
         sock.end(undefined);
     };
 
-    if (socketAnterior && socketAnterior !== sock) {
-        limpiarSocket(socketAnterior);
+    if (previousSocket && previousSocket !== sock) {
+        cleanupSocket(previousSocket);
     }
 
-    programarTimeoutSocket(sock);
+    scheduleSocketHandshakeTimeout(sock);
 
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
         if (qr) {
-            cancelarTimeoutSocket();
-            logger.info('QR', 'Escanea el código QR con tu WhatsApp:');
+            cancelSocketHandshakeTimeout();
+            logger.info('QR', 'Scan QR code with your WhatsApp client:');
             qrcode.generate(qr, { small: true });
         }
 
         if (connection === 'connecting') {
-            logger.info('WHATSAPP', 'Conectando al servidor de WhatsApp...');
+            logger.info('WHATSAPP', 'Connecting to WhatsApp WebSocket gateway...');
         }
 
         if (connection === 'open') {
-            cancelarTimeoutSocket();
-            intentoReconexion = 0;
-            logger.info('WHATSAPP', '✅ Conectado y escuchando mensajes');
-            await cargarGruposAutorizados(sock);
+            cancelSocketHandshakeTimeout();
+            reconnectAttemptCount = 0;
+            logger.info('WHATSAPP', '✅ Connected and listening for group messages');
+            await loadAuthorizedGroups(sock);
         }
 
         if (connection === 'close') {
             const error = lastDisconnect?.error;
-            const sesionRevocada = isLoggedOut(error);
-            logger.info('WHATSAPP', `Conexión cerrada. Reconnect: ${!sesionRevocada}`);
-            logger.error('WHATSAPP', `DIAGNÓSTICO: ${describirRazonDesconexion(error)}`);
+            const sessionRevoked = isLoggedOut(error);
+            logger.info('WHATSAPP', `Connection closed. Reconnect: ${!sessionRevoked}`);
+            logger.error('WHATSAPP', `DIAGNOSTIC: ${describeDisconnectReason(error)}`);
             if (error instanceof Error && error.stack) {
-                logger.error('WHATSAPP', `DIAGNÓSTICO stack: ${error.stack}`);
+                logger.error('WHATSAPP', `DIAGNOSTIC stack: ${error.stack}`);
             }
-            logger.info('WHATSAPP', `DIAGNÓSTICO credenciales en disco: ${fs.existsSync(RUTA_CREDS) ? 'SÍ existen (sesión guardada)' : 'NO existen (pedirá QR/registro)'}`);
+            logger.info('WHATSAPP', `DIAGNOSTIC credentials on disk: ${fs.existsSync(CREDS_FILE_PATH) ? 'YES (session active)' : 'NO (will require QR pairing)'}`);
 
-            cancelarTimeoutSocket();
-            limpiarSocket(sock);
+            cancelSocketHandshakeTimeout();
+            cleanupSocket(sock);
 
-            if (apagadoManual) return;
+            if (isManualShutdown) return;
 
-            if (sesionRevocada) {
-                logger.warn('RECONEXIÓN', 'Sesión revocada — borrando credenciales para pedir QR nuevo');
-                borrarCredenciales();
-                intentoReconexion = 0;
+            if (sessionRevoked) {
+                logger.warn('RECONNECT', 'Session revoked — clearing saved credentials to generate new QR pairing');
+                clearSavedCredentials();
+                reconnectAttemptCount = 0;
             }
 
-            programarReconexion();
+            scheduleReconnection();
         }
     });
 
@@ -269,11 +321,11 @@ export const initializeWhatsApp = async (): Promise<void> => {
         if (!remoteJid) return;
         if (!remoteJid.endsWith('@g.us')) return;
 
-        const chatName = gruposCache.get(remoteJid);
+        const chatName = authorizedGroupsCache.get(remoteJid);
         if (!chatName) return;
 
         try {
-            logger.info('WHATSAPP', `Mensaje en ${chatName}`);
+            logger.info('WHATSAPP', `Message received in authorized group: ${chatName}`);
 
             const messageId = msg.key.id;
             if (!messageId) return;
@@ -289,7 +341,7 @@ export const initializeWhatsApp = async (): Promise<void> => {
                     const buffer = await toBuffer(stream);
                     media = { data: buffer.toString('base64'), mimetype };
                 } catch (err) {
-                    logger.error('DOWNLOAD', 'Error descargando imagen:', err);
+                    logger.error('DOWNLOAD', 'Error downloading image payload:', err);
                 }
             }
 
@@ -297,7 +349,7 @@ export const initializeWhatsApp = async (): Promise<void> => {
                 messageId,
                 chatId: remoteJid,
                 chatName,
-                body: extraerCuerpo(msg),
+                body: extractMessageBody(msg),
                 hasMedia: !!(
                     msg.message?.imageMessage ||
                     msg.message?.videoMessage ||
@@ -314,7 +366,10 @@ export const initializeWhatsApp = async (): Promise<void> => {
 
             await processIncomingMessage(ctx);
         } catch (error) {
-            logger.error('WHATSAPP', 'Error al procesar mensaje:', error);
+            logger.error('WHATSAPP', 'Error processing incoming WhatsApp message:', error);
         }
     });
 };
+
+// Backward-compatible alias
+export const initializeWhatsApp = initializeWhatsAppClient;
