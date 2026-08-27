@@ -5,135 +5,137 @@ interface TrOCRPipeline {
     (input: string | Buffer): Promise<{ generated_text: string }>;
 }
 
-type ModoOCR = 'comprobante' | 'formulario';
+export type OcrMode = 'comprobante' | 'formulario';
 
 /**
- * Extrae todo el texto de una imagen usando Tesseract OCR (local, sin APIs externas).
+ * Extracts raw text from an image payload using local Tesseract OCR (spa+eng).
  *
- * @param imagenBase64 - Imagen en base64
- * @param modo - 'comprobante' (default) | 'formulario' (PSM SINGLE_BLOCK)
+ * @param imageBase64 - Base64-encoded image string.
+ * @param mode - 'comprobante' (default) | 'formulario' (PSM SINGLE_BLOCK).
+ * @returns Extracted raw text or 'SIN_TEXTO_DETECTADO'.
  */
-export const extraerTextoConVision = async (
-    imagenBase64: string,
-    modo: ModoOCR = 'comprobante'
+export const extractTextWithVision = async (
+    imageBase64: string,
+    mode: OcrMode = 'comprobante'
 ): Promise<string> => {
     try {
-        logger.info('OCR', `Extrayendo texto (${modo})...`);
+        logger.info('OCR', `Extracting text (${mode})...`);
 
-        const buffer = Buffer.from(imagenBase64, 'base64');
+        const buffer = Buffer.from(imageBase64, 'base64');
 
-        let resultado: Tesseract.RecognizeResult;
+        let result: Tesseract.RecognizeResult;
 
-        if (modo === 'formulario') {
+        if (mode === 'formulario') {
             const worker = await Tesseract.createWorker('spa+eng', Tesseract.OEM.LSTM_ONLY);
             await worker.setParameters({
                 tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK,
             });
-            resultado = await worker.recognize(buffer);
+            result = await worker.recognize(buffer);
             await worker.terminate();
         } else {
-            resultado = await Tesseract.recognize(
+            result = await Tesseract.recognize(
                 buffer,
                 'spa+eng',
                 { logger: () => {} }
             );
         }
 
-        const textoExtraido = resultado.data.text.trim();
+        const extractedText = result.data.text.trim();
 
-        if (!textoExtraido) {
-            logger.warn('OCR', 'No se detectó texto en la imagen.');
+        if (!extractedText) {
+            logger.warn('OCR', 'No text detected in image.');
             return 'SIN_TEXTO_DETECTADO';
         }
 
-        logger.info('OCR', `Texto extraído (${textoExtraido.length} caracteres).`);
-        logger.debug('OCR', textoExtraido);
-        return textoExtraido;
+        logger.info('OCR', `Text extracted (${extractedText.length} characters).`);
+        logger.debug('OCR', extractedText);
+        return extractedText;
 
     } catch (error) {
-        logger.error('OCR', 'Error en Tesseract:', error);
+        logger.error('OCR', 'Error in Tesseract OCR:', error);
         throw error;
     }
 };
 
-// ── TrOCR pipeline (lazy init, se descarga una sola vez) ───────
+// Backward-compatible alias
+export const extraerTextoConVision = extractTextWithVision;
 
 let trocrPipeline: TrOCRPipeline | null = null;
-let trocrCargandoPromise: Promise<TrOCRPipeline | null> | null = null;
+let trocrLoadingPromise: Promise<TrOCRPipeline | null> | null = null;
 
-async function cargarTrOCR(): Promise<TrOCRPipeline | null> {
+async function loadTrOCR(): Promise<TrOCRPipeline | null> {
     try {
-        logger.info('TrOCR', 'Cargando modelo microsoft/trocr-base-handwritten...');
+        logger.info('TrOCR', 'Loading model microsoft/trocr-base-handwritten...');
 
         const { pipeline } = await import('@xenova/transformers');
         trocrPipeline = await pipeline('image-to-text', 'Xenova/trocr-base-handwritten') as unknown as TrOCRPipeline;
 
-        logger.info('TrOCR', 'Modelo cargado correctamente');
+        logger.info('TrOCR', 'TrOCR model loaded successfully');
         return trocrPipeline;
     } catch (error) {
-        logger.error('TrOCR', 'Error cargando modelo:', error);
+        logger.error('TrOCR', 'Error loading TrOCR model:', error);
         return null;
     }
 }
 
-async function obtenerTrOCR(): Promise<TrOCRPipeline | null> {
+async function getTrOCR(): Promise<TrOCRPipeline | null> {
     if (trocrPipeline) return trocrPipeline;
-    if (trocrCargandoPromise) return trocrCargandoPromise;
+    if (trocrLoadingPromise) return trocrLoadingPromise;
 
-    trocrCargandoPromise = cargarTrOCR();
-    return trocrCargandoPromise;
+    trocrLoadingPromise = loadTrOCR();
+    return trocrLoadingPromise;
 }
 
-// ── OCR mejorado: Tesseract → TrOCR fallback ──────────────────
-
-const UMBRAL_TEXTO_CORTO = 10; // caracteres mínimos para confiar en Tesseract
+const MIN_TEXT_LENGTH_THRESHOLD = 10;
 
 /**
- * Extrae texto de una imagen con estrategia en cascada:
- * 1. Tesseract primero (rápido, bueno para texto impreso y capturas de pantalla)
- * 2. Si Tesseract falla (texto vacío o muy corto) → TrOCR (especializado en manuscrita)
- * 3. Si TrOCR también falla → retornar cadena vacía (se descarta, 0 tokens)
+ * Cascading OCR pipeline:
+ * 1. Tesseract OCR first (fast, ideal for digital receipts and screenshots).
+ * 2. If Tesseract text is empty or too short (< 10 chars) -> TrOCR fallback (specialized for handwritten notes).
+ * 3. If TrOCR also fails -> returns empty string (discarded, 0 tokens spent).
  *
- * @param imagenBase64 - Imagen en base64 ya optimizada (Sharp)
+ * @param imageBase64 - Optimized base64 image string.
+ * @returns Recognized text string or empty string.
  */
-export const extraerTextoConVisionMejorado = async (
-    imagenBase64: string
+export const extractTextWithVisionEnhanced = async (
+    imageBase64: string
 ): Promise<string> => {
     try {
-        // Paso 1: Tesseract
-        const textoTesseract = await extraerTextoConVision(imagenBase64);
+        const tesseractText = await extractTextWithVision(imageBase64);
 
-        const esTextoValido = textoTesseract
-            && textoTesseract !== 'SIN_TEXTO_DETECTADO'
-            && textoTesseract.length >= UMBRAL_TEXTO_CORTO;
+        const isValidText = tesseractText
+            && tesseractText !== 'SIN_TEXTO_DETECTADO'
+            && tesseractText.length >= MIN_TEXT_LENGTH_THRESHOLD;
 
-        if (esTextoValido) {
-            return textoTesseract;
+        if (isValidText) {
+            return tesseractText;
         }
 
-        // Paso 2: Tesseract falló → intentar TrOCR
-        logger.info('TrOCR', `Tesseract obtuvo texto corto/vacío (${textoTesseract.length} chars). Intentando TrOCR...`);
+        logger.info('TrOCR', `Tesseract produced short/empty text (${tesseractText.length} chars). Attempting TrOCR...`);
 
-        const pipeline = await obtenerTrOCR();
+        const pipeline = await getTrOCR();
         if (!pipeline) {
-            logger.warn('TrOCR', 'Modelo no disponible, descartando imagen');
+            logger.warn('TrOCR', 'TrOCR model unavailable, discarding image');
             return '';
         }
 
-        const buffer = Buffer.from(imagenBase64, 'base64');
-        const resultado = await pipeline(buffer);
-        const textoTrOCR = (resultado?.generated_text || '').trim();
+        const buffer = Buffer.from(imageBase64, 'base64');
+        const result = await pipeline(buffer);
+        const trocrText = (result?.generated_text || '').trim();
 
-        if (textoTrOCR && textoTrOCR.length >= UMBRAL_TEXTO_CORTO) {
-            logger.info('TrOCR', `Texto extraído (${textoTrOCR.length} caracteres).`);
-            return textoTrOCR;
+        if (trocrText && trocrText.length >= MIN_TEXT_LENGTH_THRESHOLD) {
+            logger.info('TrOCR', `Text extracted with TrOCR (${trocrText.length} chars).`);
+            return trocrText;
         }
 
-        logger.warn('TrOCR', 'Tampoco se detectó texto con TrOCR.');
+        logger.warn('TrOCR', 'No text detected via TrOCR either.');
         return '';
 
     } catch (error) {
-        logger.error('OCR', 'Error en OCR mejorado:', error);
+        logger.error('OCR', 'Error in enhanced OCR cascade:', error);
         return '';
     }
 };
+
+// Backward-compatible alias
+export const extraerTextoConVisionMejorado = extractTextWithVisionEnhanced;

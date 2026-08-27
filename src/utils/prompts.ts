@@ -1,45 +1,71 @@
-// src/utils/prompts.ts
-export const construirPromptContable = (contextoWhatsApp: string, textoOCR: string, bancoPorColor?: string): string => {
-const hintBanco = bancoPorColor
-    ? `\nBANCO DETECTADO VISUALMENTE: ${bancoPorColor}. Usa este valor como medioDePago.\n`
-    : '';
+/**
+ * Builds the accounting analysis prompt (Prompt A) sent to OpenAI.
+ * Uses concise English system instructions to minimize token usage while retaining
+ * exact Colombian banking domain keywords in Spanish for extraction accuracy.
+ * 
+ * @param whatsappContext - Text conversation history accumulated between receipts.
+ * @param ocrText - Text extracted from the receipt image via Tesseract / TrOCR.
+ * @param bankByColor - Visual bank hint derived from image color palette analysis.
+ * @returns Complete prompt string ready for OpenAI chat completion.
+ */
+export const buildAccountingPrompt = (
+    whatsappContext: string,
+    ocrText: string,
+    bankByColor?: string
+): string => {
+    const bankHint = bankByColor
+        ? `\nVISUALLY DETECTED BANK: ${bankByColor}. Use this value for medioDePago.\n`
+        : '';
 
-return `Analista contable. Extrae los datos de una transferencia bancaria a partir del OCR de la imagen del comprobante.
-${hintBanco}
-OCR (texto extraído de la IMAGEN):
-${textoOCR}
+    return `Accounting Analyst. Extract bank transfer payment data from receipt OCR text.
+${bankHint}
+OCR (text from RECEIPT IMAGE):
+${ocrText}
 
-DECISIÓN — esComprobanteValido:
-- true SOLO si el OCR corresponde a un comprobante real de transferencia (Nequi, Bancolombia, Davivienda o Daviplata) con datos típicos: banco/billetera, valor, referencia y/o cuenta.
-- false si el OCR es de otra cosa (foto de producto, caja, reloj, nota, chat) o es ilegible.
-- Decide EXCLUSIVAMENTE con el OCR de arriba. El historial de WhatsApp de abajo es solo contexto de la conversación y NUNCA debe influir en esta decisión.
+DECISION — esComprobanteValido:
+- true ONLY if OCR is a genuine Colombian bank transfer receipt (Nequi, Bancolombia, Davivienda, Daviplata) containing: bank/wallet, amount, reference number, or account.
+- false if OCR is a product photo, watch, box, paper note, or unreadable chat.
+- Base your decision EXCLUSIVELY on the OCR text above. The WhatsApp conversation context below must NEVER influence this decision.
 
-EXTRAER (solo si esComprobanteValido es true):
+EXTRACTION (only if esComprobanteValido is true):
 - fecha: DD/MM/YYYY
-- precioCompra: string sin símbolos (ej "165000")
-- medioDePago: banco o billetera que EMITE el comprobante. ATENCIÓN: el OCR puede mencionar "Nequi" como texto promocional de otros bancos ("transferencias a Nequi"). Ignora esas menciones y determina quién EMITE realmente el comprobante. Si no puedes determinarlo → "No identificado".
-- referenciaDePago: n° de referencia, No.Comprobante, No.Aprob
-- cuentaDestino: cuenta destino (10 dígitos)
-- descripcion: "Pedido al por menor" por defecto
+- precioCompra: numeric string without symbols (e.g. "165000")
+- medioDePago: Bank or wallet that ISSUED the receipt. Note: OCR may contain promotional text like "transferencias a Nequi" from other banks. Determine who actually ISSUED it. If unknown -> "No identificado".
+- referenciaDePago: Reference number, No.Comprobante, No.Aprob
+- cuentaDestino: 10-digit destination account number
+- descripcion: "Pedido al por menor" by default
 
-HISTORIAL DE WHATSAPP (contexto de la conversación — NO es la imagen. Úsalo solo para enriquecer campos, nunca para esComprobanteValido):
-${contextoWhatsApp}
+WHATSAPP CONVERSATION CONTEXT (Use only to enrich missing fields, never for esComprobanteValido):
+${whatsappContext}
 
 JSON: {"esComprobanteValido":true,"fecha":"","descripcion":"","precioCompra":"","medioDePago":"","referenciaDePago":"","cuentaDestino":""}`;
 };
 
-export const construirPromptCliente = (bloqueTexto: string): string => {
-return `Asistente de ventas. Extrae datos del cliente.
+// Backward-compatible alias
+export const construirPromptContable = buildAccountingPrompt;
 
-TEXTO:
-${bloqueTexto}
+/**
+ * Builds the customer details extraction prompt (Prompt B) sent to OpenAI.
+ * Uses concise English instructions to extract shipping and buyer information.
+ * 
+ * @param textBlock - Accumulated WhatsApp message context.
+ * @returns Complete prompt string ready for OpenAI chat completion.
+ */
+export const buildCustomerPrompt = (textBlock: string): string => {
+    return `Sales Assistant. Extract customer shipping and vendor data from chat text.
 
-REGLAS:
-- Solo datos explícitos, no inventes. No encontrado → "N/A".
-- telefono: solo dígitos.
-- municipio: solo nombre, sin departamento.
-- nombreCliente: SOLO si hay comprador explícito (ej "nombre: Juan", "cliente: Maria", "pedido de Pedro"). NO confundir "venta Evelin/Alejandra/Karol" (es vendedor, no cliente). Si solo hay "venta X" → "N/A".
-- vendedor: "venta" + nombre (Evelin, Alejandra, Aleja, Karol) o "vendedor: nombre". Si no → "N/A".
+TEXT:
+${textBlock}
+
+RULES:
+- Only extract explicit data, do not hallucinate. If not found -> "N/A".
+- telefono: digits only.
+- municipio: city/municipality name only, without department.
+- nombreCliente: ONLY if there is an explicit buyer (e.g. "nombre: Juan", "cliente: Maria", "pedido de Pedro"). DO NOT confuse with "venta Evelin/Alejandra/Karol" (vendor, not customer). If only "venta X" -> "N/A".
+- vendedor: "venta" + name (Evelin, Alejandra, Aleja, Karol) or "vendedor: name". Otherwise -> "N/A".
 
 JSON: {"nombreCliente":"","email":"","telefono":"","municipio":"","vendedor":""}`;
 };
+
+// Backward-compatible alias
+export const construirPromptCliente = buildCustomerPrompt;

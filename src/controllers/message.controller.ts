@@ -1,7 +1,7 @@
-import { extraerDatosDesdeTextoOCR, extraerDatosCliente, optimizarImagenParaOCR } from '../services/ai.service';
+import { extractAccountingDataFromOcr, extractCustomerDataFromText, optimizeImageForOcr } from '../services/ai.service';
 import { appendIncomeRow, appendSalesRow, enrichSalesRow, updateIncomeRow } from '../services/sheets.service';
 import { saveTransaction, updateSalesRowIndex, findTransactionByMessageId, findTransactionByPaymentReference, findTransactionByOrderNumber } from '../services/memory.service';
-import { extraerTextoConVisionMejorado } from '../services/vision.service';
+import { extractTextWithVisionEnhanced } from '../services/vision.service';
 import { formatDate, normalizeOcrText, isUsefulText, detectBankByColor } from '../utils/helpers';
 import { logger } from '../utils/logger';
 import type { DatosIngreso, DatosCliente } from '../types';
@@ -153,7 +153,7 @@ async function finalizarTransaccionAnterior(chatId: string): Promise<void> {
 
     logger.info('CIERRE', `Finalizando Ventas de ${transaccion.nPedido} (${contexto.split('\n').length} ítem(s) en contexto)`);
 
-    const datosCliente = await extraerDatosCliente(contexto);
+    const datosCliente = await extractCustomerDataFromText(contexto);
     if (!datosCliente) {
         contextoPorChat.delete(chatId);
         transaccionActualPorChat.set(chatId, null);
@@ -206,8 +206,8 @@ function programarCierreRespaldo(chatId: string): void {
 // ── Pipeline de comprobante ──────────────────────────────────
 
 async function preprocesarImagen(media: MediaData): Promise<string> {
-    const imgOptimizada = await optimizarImagenParaOCR(media.data);
-    return normalizeOcrText(await extraerTextoConVisionMejorado(imgOptimizada));
+    const imgOptimizada = await optimizeImageForOcr(media.data);
+    return normalizeOcrText(await extractTextWithVisionEnhanced(imgOptimizada));
 }
 
 function procesarImagenNoComprobante(chatId: string, textoOCR: string): void {
@@ -234,7 +234,7 @@ async function procesarComprobante(
         ? contextoParaPromptA.substring(0, MAX_CONTEXTO_CHARS) + '...'
         : (contextoParaPromptA || 'No hay contexto de texto para esta imagen.');
 
-    const datosExtraidos = await extraerDatosDesdeTextoOCR(textoOCR, contextoTruncado, bancoPorColor);
+    const datosExtraidos = await extractAccountingDataFromOcr(textoOCR, contextoTruncado, bancoPorColor);
 
     if (!datosExtraidos || !datosExtraidos.esComprobanteValido) {
         logger.info('IMAGEN', 'No es comprobante válido');
@@ -309,7 +309,7 @@ async function procesarTextoConReply(ctx: MensajeEntrante): Promise<void> {
         agregarAlContexto(ctx.chatId, ctx.body);
         logger.info('REPLY', `Asociado a transacción activa ${transaccionActual.nPedido}`);
 
-        const datosCliente = await extraerDatosCliente(ctx.body);
+        const datosCliente = await extractCustomerDataFromText(ctx.body);
         if (!datosCliente) return;
 
         const t = findTransactionByMessageId(transaccionActual.messageId);
@@ -351,7 +351,7 @@ async function procesarTextoConReply(ctx: MensajeEntrante): Promise<void> {
     const transaccion = findTransactionByMessageId(quotedId);
     if (transaccion) {
         logger.info('REPLY', `Reply tardío para ${transaccion.nPedido}`);
-        const datosCliente = await extraerDatosCliente(ctx.body);
+        const datosCliente = await extractCustomerDataFromText(ctx.body);
         if (!datosCliente) return;
 
         if (datosCliente.vendedor && datosCliente.vendedor !== 'N/A') {
