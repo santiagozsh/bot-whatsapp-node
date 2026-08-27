@@ -1,7 +1,10 @@
 import { normalizeText } from './helpers';
 import type { DatosProducto } from '../types';
 
-const MARCAS_RELOJ: Set<string> = new Set([
+/**
+ * Known watch brands and abbreviations sold by Luxury Gotti (replicas and originals).
+ */
+const WATCH_BRANDS: Set<string> = new Set([
     "CSO", "CASIO",
     "CURREN",
     "G-FORCE", "GFORCE", "G FORCE", "G FORCE GP",
@@ -17,11 +20,17 @@ const MARCAS_RELOJ: Set<string> = new Set([
     "YAKARTA",
 ]);
 
-const KEYWORDS_RELOJ: Set<string> = new Set([
+/**
+ * Generic watch keywords indicating a watch item.
+ */
+const WATCH_KEYWORDS: Set<string> = new Set([
     "RELOJ", "RELOJES", "CRONOGRAFO", "CRONÓGRAFO",
 ]);
 
-const KEYWORDS_OTROS: Set<string> = new Set([
+/**
+ * Accessories and non-watch product categories.
+ */
+const ACCESSORY_KEYWORDS: Set<string> = new Set([
     "GAFAS", "LENTES", "LENTE",
     "PERFUME", "PERFUMERIA", "PERFUMERÍA", "COLONIA",
     "CAJA", "CAJAS", "ESTUCHE", "ESTUCHES",
@@ -31,21 +40,27 @@ const KEYWORDS_OTROS: Set<string> = new Set([
     "ACCESORIO", "ACCESORIOS",
 ]);
 
-const KEYWORDS_COMBO: Set<string> = new Set([
+/**
+ * Bundle / promotional kit package keywords.
+ */
+const COMBO_KEYWORDS: Set<string> = new Set([
     "COMBO", "KIT", "PAQUETE", "LOTE",
     "EMPRENDEDOR", "DESPEGUE", "IMPULSO", "DOMINIO",
     "MONEY", "YAKARTA", "RIO", "INICIO INTELIGENTE",
 ]);
 
-const CANTIDAD_MAXIMA = 50;
+const MAX_SAFE_QUANTITY = 50;
 
-function parsearCantidadSegura(valor: string): number {
-    const n = parseInt(valor, 10);
-    if (isNaN(n) || n <= 0 || n > CANTIDAD_MAXIMA) return 1;
+/**
+ * Parses an integer safely, enforcing upper and lower bounds.
+ */
+function parseSafeQuantity(value: string): number {
+    const n = parseInt(value, 10);
+    if (isNaN(n) || n <= 0 || n > MAX_SAFE_QUANTITY) return 1;
     return n;
 }
 
-const KEYWORDS_CANTIDAD: Set<string> = new Set([
+const QUANTITY_UNIT_KEYWORDS: Set<string> = new Set([
     'UNDS', 'UND', 'UNIDADES',
     'CAJAS', 'CAJA',
     'RELOJES', 'RELOJ',
@@ -58,111 +73,136 @@ const KEYWORDS_CANTIDAD: Set<string> = new Set([
     'ACCESORIOS', 'ACCESORIO',
 ]);
 
-function esPrecio(valor: string, siguientePalabra?: string): boolean {
-    const numeroStr = valor.replace(/[.,]/g, '');
-    const n = parseInt(numeroStr, 10);
+/**
+ * Distinguishes whether a numeric prefix is a product price (e.g. 150000) rather than a quantity.
+ */
+function isPrice(value: string, nextWord?: string): boolean {
+    const numStr = value.replace(/[.,]/g, '');
+    const n = parseInt(numStr, 10);
     if (isNaN(n)) return false;
     if (n > 999) return true;
-    if (siguientePalabra && KEYWORDS_CANTIDAD.has(siguientePalabra.toUpperCase())) return false;
-    if (/\d000/.test(numeroStr) && n >= 1000) return true;
+    if (nextWord && QUANTITY_UNIT_KEYWORDS.has(nextWord.toUpperCase())) return false;
+    if (/\d000/.test(numStr) && n >= 1000) return true;
     return false;
 }
 
-function extraerCantidad(item: string): { cantidad: number; textoLimpio: string } {
-    const t = item.trim();
+/**
+ * Extracts multiplier quantities from item strings (e.g., "CASIO x2", "2x TISSOT", "3 GAFAS").
+ */
+function extractQuantity(item: string): { quantity: number; cleanText: string } {
+    const trimmed = item.trim();
 
-    const trailingMult = t.match(/^(.+?)\s*[×xX]\s*(\d+)$/);
+    // Trailing multiplier: "CASIO x2", "ROLEX × 3"
+    const trailingMult = trimmed.match(/^(.+?)\s*[×xX]\s*(\d+)$/);
     if (trailingMult && trailingMult[1] && trailingMult[2]) {
-        return { cantidad: parsearCantidadSegura(trailingMult[2]), textoLimpio: trailingMult[1].trim() };
+        return { quantity: parseSafeQuantity(trailingMult[2]), cleanText: trailingMult[1].trim() };
     }
 
-    const leadingMult = t.match(/^(\d+)\s*[×xX]\s*(.+)/);
+    // Leading multiplier: "2x TISSOT"
+    const leadingMult = trimmed.match(/^(\d+)\s*[×xX]\s*(.+)/);
     if (leadingMult && leadingMult[1] && leadingMult[2]) {
-        const sigPalabra = leadingMult[2].trim().split(/\s+/)[0];
-        if (esPrecio(leadingMult[1], sigPalabra)) return { cantidad: 1, textoLimpio: t };
-        return { cantidad: parsearCantidadSegura(leadingMult[1]), textoLimpio: leadingMult[2].trim() };
+        const nextWord = leadingMult[2].trim().split(/\s+/)[0];
+        if (isPrice(leadingMult[1], nextWord)) return { quantity: 1, cleanText: trimmed };
+        return { quantity: parseSafeQuantity(leadingMult[1]), cleanText: leadingMult[2].trim() };
     }
 
-    const leadingQty = t.match(/^(\d+)\s+(.+)/);
+    // Leading quantity: "2 CASIO"
+    const leadingQty = trimmed.match(/^(\d+)\s+(.+)/);
     if (leadingQty && leadingQty[1] && leadingQty[2]) {
-        const sigPalabra = leadingQty[2].trim().split(/\s+/)[0];
-        if (esPrecio(leadingQty[1], sigPalabra)) return { cantidad: 1, textoLimpio: t };
-        return { cantidad: parsearCantidadSegura(leadingQty[1]), textoLimpio: leadingQty[2].trim() };
+        const nextWord = leadingQty[2].trim().split(/\s+/)[0];
+        if (isPrice(leadingQty[1], nextWord)) return { quantity: 1, cleanText: trimmed };
+        return { quantity: parseSafeQuantity(leadingQty[1]), cleanText: leadingQty[2].trim() };
     }
 
-    return { cantidad: 1, textoLimpio: t };
+    return { quantity: 1, cleanText: trimmed };
 }
 
-function contieneMarcaReloj(normalizado: string): boolean {
-    const palabras = normalizado.split(/\s+/);
+/**
+ * Checks if a normalized string contains a known watch brand (single or multi-word).
+ */
+function containsWatchBrand(normalized: string): boolean {
+    const words = normalized.split(/\s+/);
 
-    if (palabras[0] && MARCAS_RELOJ.has(palabras[0])) return true;
+    if (words[0] && WATCH_BRANDS.has(words[0])) return true;
 
-    for (let i = 0; i < palabras.length; i++) {
-        for (let j = i + 1; j <= Math.min(i + 3, palabras.length); j++) {
-            const frase = palabras.slice(i, j).join(' ');
-            if (MARCAS_RELOJ.has(frase)) return true;
+    for (let i = 0; i < words.length; i++) {
+        for (let j = i + 1; j <= Math.min(i + 3, words.length); j++) {
+            const phrase = words.slice(i, j).join(' ');
+            if (WATCH_BRANDS.has(phrase)) return true;
         }
     }
 
     return false;
 }
 
-function clasificarItem(item: string): { esReloj: boolean; cantidad: number } | null {
-    const { cantidad, textoLimpio } = extraerCantidad(item);
-    const normalizado = normalizeText(textoLimpio);
-    const palabras = normalizado.split(/\s+/);
+/**
+ * Classifies an individual line item into a Watch vs Accessory category with its parsed quantity.
+ */
+function classifyItem(item: string): { isWatch: boolean; quantity: number } | null {
+    const { quantity, cleanText } = extractQuantity(item);
+    const normalized = normalizeText(cleanText);
+    const words = normalized.split(/\s+/);
 
-    // Si el item es puro precio sin marca/producto → no es producto
-    const itemLimpio = item.trim();
-    if (/^\d[\d.,]*$/.test(itemLimpio)) return null;
+    const cleanItem = item.trim();
+    if (/^\d[\d.,]*$/.test(cleanItem)) return null;
 
-    const coincideConOtros = palabras.some(p => KEYWORDS_OTROS.has(p));
-    if (coincideConOtros) {
-        return { esReloj: false, cantidad };
+    const matchesAccessories = words.some(p => ACCESSORY_KEYWORDS.has(p));
+    if (matchesAccessories) {
+        return { isWatch: false, quantity };
     }
 
-    if (contieneMarcaReloj(normalizado)) {
-        return { esReloj: true, cantidad };
+    if (containsWatchBrand(normalized)) {
+        return { isWatch: true, quantity };
     }
 
-    const esCombo = [...KEYWORDS_COMBO].some(kw => normalizado.includes(kw));
-    if (esCombo) {
-        const matchRelojes = normalizado.match(/(\d+)\s+RELOJ/);
-        if (matchRelojes && matchRelojes[1]) {
-            return { esReloj: true, cantidad: parseInt(matchRelojes[1], 10) };
+    const isCombo = [...COMBO_KEYWORDS].some(kw => normalized.includes(kw));
+    if (isCombo) {
+        const watchMatch = normalized.match(/(\d+)\s+RELOJ/);
+        if (watchMatch && watchMatch[1]) {
+            return { isWatch: true, quantity: parseInt(watchMatch[1], 10) };
         }
-        return { esReloj: true, cantidad: 1 };
+        return { isWatch: true, quantity: 1 };
     }
 
-    const coincideConReloj = palabras.some(p => KEYWORDS_RELOJ.has(p));
-    if (coincideConReloj) {
-        return { esReloj: true, cantidad };
+    const matchesWatchKeywords = words.some(p => WATCH_KEYWORDS.has(p));
+    if (matchesWatchKeywords) {
+        return { isWatch: true, quantity };
     }
 
     return null;
 }
 
-export function extraerListaProductos(textoCrudo: string): DatosProducto {
-    if (!textoCrudo || textoCrudo.trim() === '') {
+/**
+ * Parses raw unstructured conversational text into structured product lines,
+ * splitting counts between watches and other accessories.
+ * 
+ * @example
+ * parseProductList("CASIO retro x2, 1 PERFUME 100ml")
+ * // => { lineasProducto: ["CASIO retro x2", "1 PERFUME 100ml"], cantidadRelojes: 2, cantidadOtros: 1 }
+ * 
+ * @param rawText - Unstructured order text from WhatsApp.
+ * @returns Structured product line items and categorized unit counts.
+ */
+export function parseProductList(rawText: string): DatosProducto {
+    if (!rawText || rawText.trim() === '') {
         return { lineasProducto: [], cantidadRelojes: 0, cantidadOtros: 0 };
     }
 
-    const lineas = textoCrudo.split('\n').flatMap(linea => linea.split(','));
-    const items = lineas.map(i => i.trim()).filter(Boolean);
+    const lines = rawText.split('\n').flatMap(line => line.split(','));
+    const items = lines.map(i => i.trim()).filter(Boolean);
 
     let cantidadRelojes = 0;
     let cantidadOtros = 0;
     const lineasProducto: string[] = [];
 
     for (const item of items) {
-        const resultado = clasificarItem(item);
-        if (!resultado) continue;
-        const { esReloj, cantidad } = resultado;
-        if (esReloj) {
-            cantidadRelojes += cantidad;
+        const result = classifyItem(item);
+        if (!result) continue;
+        const { isWatch, quantity } = result;
+        if (isWatch) {
+            cantidadRelojes += quantity;
         } else {
-            cantidadOtros += cantidad;
+            cantidadOtros += quantity;
         }
         lineasProducto.push(item);
     }

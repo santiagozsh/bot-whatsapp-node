@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 import * as dotenv from 'dotenv';
 import sharp from 'sharp';
 import { construirPromptContable, construirPromptCliente } from '../utils/prompts';
-import { extraerListaProductos } from '../utils/luxurygotti.data';
+import { parseProductList } from '../utils/luxurygotti.data';
 import { executeWithRetry, classifyIncomeType, extractVendor } from '../utils/helpers';
 import { logger } from '../utils/logger';
 import type { DatosOCRBrutos, DatosIngreso, DatosCliente } from '../types';
@@ -129,7 +129,7 @@ export const extraerDatosCliente = async (bloqueTexto: string): Promise<DatosCli
         const respuestaJson = resultado.choices[0]?.message?.content || '{}';
         const crudo = JSON.parse(respuestaJson);
 
-        const datosProducto = extraerListaProductos(bloqueTexto);
+        const datosProducto = parseProductList(bloqueTexto);
 
         const datosCliente: DatosCliente = {
             nombreCliente:  crudo.nombreCliente || 'N/A',

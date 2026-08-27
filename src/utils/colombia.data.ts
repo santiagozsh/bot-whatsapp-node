@@ -13,9 +13,9 @@ import { normalizeText } from './helpers';
  * Los municipios con nombre ambiguo se documentan con comentarios.
  *
  * Uso:
- *   obtenerDepartamento("Armenia")  → "QUINDÍO"
- *   obtenerDepartamento("bogotá")   → "CUNDINAMARCA"
- *   obtenerDepartamento("XYZ")      → "N/A"
+ *   getDepartment("Armenia")  → "QUINDÍO"
+ *   getDepartment("bogotá")   → "CUNDINAMARCA"
+ *   getDepartment("XYZ")      → "N/A"
  */
 const MUNICIPIOS_COLOMBIA: Record<string, string> = {
 
@@ -1103,26 +1103,23 @@ const MUNICIPIOS_COLOMBIA: Record<string, string> = {
     "CUMARIBO": "VICHADA",
     "LA PRIMAVERA": "VICHADA",
     "SANTA ROSALIA": "VICHADA",
-
 };
 
 /**
- * Devuelve el nombre del departamento colombiano a partir del nombre del municipio.
- *
- * Normaliza el input automáticamente (mayúsculas, sin tildes) antes de buscar,
- * por lo que "Armenia", "ARMENIA" y "armenia" producen el mismo resultado.
- *
- * @param municipio - Nombre del municipio (libre, con o sin tildes)
- * @returns Nombre del departamento (con tildes, para visualización) o "N/A" si no se encuentra
- *
+ * Resolves the department name for a given Colombian municipality.
+ * Strips diacritics and matches case-insensitively against ~1120 official Colombian municipalities.
+ * 
  * @example
- * obtenerDepartamento("Armenia")   // → "QUINDÍO"
- * obtenerDepartamento("bogotá")    // → "CUNDINAMARCA"
- * obtenerDepartamento("Medellín")  // → "ANTIOQUIA"
- * obtenerDepartamento("XYZ")       // → "N/A"
+ * getDepartment("bogotá")    // => "CUNDINAMARCA"
+ * getDepartment("Medellín")  // => "ANTIOQUIA"
+ * getDepartment("Armenia")   // => "QUINDÍO"
+ * getDepartment("Miami")     // => "N/A"
+ * 
+ * @param municipality - Colombian municipality name.
+ * @returns Department name with proper visual accents, or "N/A" if unrecognized.
  */
-export function obtenerDepartamento(municipio: string): string {
-    if (!municipio || municipio.trim() === "") return "N/A";
-    const clave = normalizeText(municipio);
-    return MUNICIPIOS_COLOMBIA[clave] ?? "N/A";
+export function getDepartment(municipality: string): string {
+    if (!municipality || municipality.trim() === "") return "N/A";
+    const key = normalizeText(municipality);
+    return MUNICIPIOS_COLOMBIA[key] ?? "N/A";
 }

@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as dotenv from 'dotenv';
 import { formatDate, formatAccountNumber, executeWithRetry } from '../utils/helpers';
 import { generarSiguienteNPedido, registrarSyncCallback } from './memory.service';
-import { obtenerDepartamento } from '../utils/colombia.data';
+import { getDepartment } from '../utils/colombia.data';
 import { logger } from '../utils/logger';
 import type { DatosIngreso, DatosCliente, DatosIngresoParcial } from '../types';
 
@@ -96,7 +96,7 @@ export const escribirFilaVenta = async (
             const sheets = await obtenerSheets();
             const hojaVentas = process.env.SHEETS_VENTAS_NOMBRE || 'Ventas';
 
-            const departamento = obtenerDepartamento(datosCliente.municipio || '');
+            const departamento = getDepartment(datosCliente.municipio || '');
 
             const filaDeDatos = [
                 nPedido,
@@ -153,7 +153,7 @@ export const mergeFilaVenta = async (
                 return limpio === '' || limpio === 'N/A' || limpio === '0';
             };
 
-            const deptoNuevo = obtenerDepartamento(datosNuevos.municipio || '');
+            const deptoNuevo = getDepartment(datosNuevos.municipio || '');
 
             const filaFinal = [
                 filaActual[0] || '',
