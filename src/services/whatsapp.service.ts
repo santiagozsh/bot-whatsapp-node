@@ -3,8 +3,8 @@ import type { WAMessage } from '@whiskeysockets/baileys';
 import * as qrcode from 'qrcode-terminal';
 import * as fs from 'fs';
 import * as path from 'path';
-import { procesarMensajeEntrante } from '../controllers/message.controller';
-import type { MensajeEntrante, MediaData } from '../controllers/message.controller';
+import { processIncomingMessage } from '../controllers/message.controller';
+import type { IncomingMessage, MediaData } from '../controllers/message.controller';
 import pino from 'pino';
 import { logger } from '../utils/logger';
 
@@ -293,7 +293,7 @@ export const initializeWhatsApp = async (): Promise<void> => {
                 }
             }
 
-            const ctx: MensajeEntrante = {
+            const ctx: IncomingMessage = {
                 messageId,
                 chatId: remoteJid,
                 chatName,
@@ -312,7 +312,7 @@ export const initializeWhatsApp = async (): Promise<void> => {
                 ...(media ? { media } : {}),
             };
 
-            await procesarMensajeEntrante(ctx);
+            await processIncomingMessage(ctx);
         } catch (error) {
             logger.error('WHATSAPP', 'Error al procesar mensaje:', error);
         }

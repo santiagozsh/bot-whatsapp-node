@@ -1,9 +1,11 @@
 /**
- * Tipos compartidos del dominio del bot.
+ * Shared domain types and interfaces for the Luxury Gotti WhatsApp accounting automation bot.
  */
 
-// Extraído por OpenAI Prompt A desde el comprobante bancario (campos crudos, todos opcionales)
-export interface DatosOCRBrutos {
+/**
+ * Raw OCR fields extracted by OpenAI Prompt A from bank receipt text (all optional).
+ */
+export interface RawOcrData {
     esComprobanteValido?: boolean;
     fecha?: string;
     descripcion?: string;
@@ -13,8 +15,13 @@ export interface DatosOCRBrutos {
     cuentaDestino?: string;
 }
 
-// Resultado final luego de procesar DatosOCRBrutos con defaults y clasificación local
-export interface DatosIngreso {
+// Backward-compatible alias
+export type DatosOCRBrutos = RawOcrData;
+
+/**
+ * Validated and enriched income transaction data ready for Google Sheets `Ingresos transacciones` insertion.
+ */
+export interface IncomeData {
     esComprobanteValido: boolean;
     fecha: string;
     tipo: string;
@@ -26,8 +33,13 @@ export interface DatosIngreso {
     vendedor: string;
 }
 
-// Extraído por OpenAI Prompt B desde el contexto del chat (datos crudos de persona)
-export interface DatosClienteCrudos {
+// Backward-compatible alias
+export type DatosIngreso = IncomeData;
+
+/**
+ * Raw customer and vendor information extracted by OpenAI Prompt B from conversational text.
+ */
+export interface RawCustomerData {
     nombreCliente: string;
     email: string;
     telefono: string;
@@ -35,23 +47,41 @@ export interface DatosClienteCrudos {
     vendedor: string;
 }
 
-// Datos completos del cliente: lo de OpenAI + productos extraídos localmente
-export interface DatosCliente extends DatosClienteCrudos {
+// Backward-compatible alias
+export type DatosClienteCrudos = RawCustomerData;
+
+/**
+ * Unified customer order record combining Prompt B contact details with local deterministic product quantities.
+ */
+export interface CustomerData extends RawCustomerData {
     producto: string;
     cantidadRelojes: number;
     cantidadOtros: number;
 }
 
-// Campos opcionales para actualizar una fila de Ingreso (correcciones)
-export interface DatosIngresoParcial {
+// Backward-compatible alias
+export type DatosCliente = CustomerData;
+
+/**
+ * Partial income fields for direct corrections (e.g. via WhatsApp reply).
+ */
+export interface PartialIncomeData {
     tipo?: string;
     vendedor?: string;
     descripcion?: string;
 }
 
-// Producto individual detectado por el parser local
-export interface DatosProducto {
+// Backward-compatible alias
+export type DatosIngresoParcial = PartialIncomeData;
+
+/**
+ * Structured product counts and item lines parsed by the local product parser.
+ */
+export interface ProductData {
     lineasProducto: string[];
     cantidadRelojes: number;
     cantidadOtros: number;
 }
+
+// Backward-compatible alias
+export type DatosProducto = ProductData;

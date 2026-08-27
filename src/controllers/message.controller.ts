@@ -4,14 +4,14 @@ import { saveTransaction, updateSalesRowIndex, findTransactionByMessageId, findT
 import { extractTextWithVisionEnhanced } from '../services/vision.service';
 import { formatDate, normalizeOcrText, isUsefulText, detectBankByColor } from '../utils/helpers';
 import { logger } from '../utils/logger';
-import type { DatosIngreso, DatosCliente } from '../types';
+import type { IncomeData, CustomerData } from '../types';
 
-// ── Constantes ────────────────────────────────────────────────
+// ── Constants ────────────────────────────────────────────────
 
-const TIEMPO_TTL_CONTEXTO = parseInt(process.env.TIEMPO_TTL_CONTEXTO || '14400000');
-const TIEMPO_CIERRE_RESPALDO = parseInt(process.env.TIEMPO_CIERRE_RESPALDO || '14400000');
+const CONTEXT_TTL_MS = parseInt(process.env.TIEMPO_TTL_CONTEXTO || '14400000', 10);
+const FALLBACK_CLOSING_TIMEOUT_MS = parseInt(process.env.TIEMPO_CIERRE_RESPALDO || '14400000', 10);
 
-const KEYWORDS_FINANCIEROS = [
+const FINANCIAL_KEYWORDS = [
     'nequi', 'bancolombia', 'davivienda', 'daviplata',
     'transferencia', 'comprobante', 'pago', 'valor',
     'total', 'cuenta', 'ahorros', 'corriente',
@@ -19,9 +19,9 @@ const KEYWORDS_FINANCIEROS = [
     'transaccion', 'transacción',
 ];
 
-// ── Tipos ────────────────────────────────────────────────────
+// ── Types ────────────────────────────────────────────────────
 
-export interface MensajeEntrante {
+export interface IncomingMessage {
     messageId: string;
     chatId: string;
     chatName: string;
@@ -34,367 +34,416 @@ export interface MensajeEntrante {
     media?: MediaData;
 }
 
+// Backward-compatible alias
+export type MensajeEntrante = IncomingMessage;
+
 export interface MediaData {
     data: string;
     mimetype: string;
 }
 
-interface ItemContexto {
-    texto: string;
+export interface ContextItem {
+    text: string;
     timestamp: number;
 }
 
-interface TransaccionPendiente {
-    nPedido: string;
+export interface PendingTransaction {
+    orderNumber: string;
     messageId: string;
-    fecha: string;
+    date: string;
 }
 
-// ── Estado del chat ──────────────────────────────────────────
+// ── In-Memory Chat State ─────────────────────────────────────
 
-const contextoPorChat = new Map<string, ItemContexto[]>();
-const transaccionActualPorChat = new Map<string, TransaccionPendiente | null>();
-const colasPorChat = new Map<string, Promise<void>>();
-const timersRespaldoPorChat = new Map<string, NodeJS.Timeout>();
+const contextByChatId = new Map<string, ContextItem[]>();
+const activeTransactionByChatId = new Map<string, PendingTransaction | null>();
+const queuesByChatId = new Map<string, Promise<void>>();
+const fallbackTimersByChatId = new Map<string, NodeJS.Timeout>();
 
-// ── Helpers de contexto ──────────────────────────────────────
+/**
+ * Resets in-memory controller state for isolated testing.
+ */
+export function _clearControllerStateForTesting(): void {
+    contextByChatId.clear();
+    activeTransactionByChatId.clear();
+    queuesByChatId.clear();
+    for (const timer of fallbackTimersByChatId.values()) {
+        clearTimeout(timer);
+    }
+    fallbackTimersByChatId.clear();
+}
 
-function agregarAlContexto(chatId: string, texto: string): void {
-    if (!texto || texto === 'SIN_TEXTO_DETECTADO') return;
+/**
+ * Retrieves the raw accumulated chat context string for a chat ID (used in testing).
+ */
+export function _getChatContextForTesting(chatId: string): string {
+    return getChatContext(chatId);
+}
 
-    const ahora = Date.now();
-    const ttl = TIEMPO_TTL_CONTEXTO;
+/**
+ * Retrieves the currently active pending transaction for a chat ID (used in testing).
+ */
+export function _getActiveTransactionForTesting(chatId: string): { nPedido: string; messageId: string } | null {
+    const tx = activeTransactionByChatId.get(chatId);
+    if (!tx) return null;
+    return { nPedido: tx.orderNumber, messageId: tx.messageId };
+}
 
-    if (!contextoPorChat.has(chatId)) {
-        contextoPorChat.set(chatId, []);
+// ── Context Management Helpers ───────────────────────────────
+
+function appendToChatContext(chatId: string, text: string): void {
+    if (!text || text === 'SIN_TEXTO_DETECTADO') return;
+
+    const now = Date.now();
+    const ttl = CONTEXT_TTL_MS;
+
+    if (!contextByChatId.has(chatId)) {
+        contextByChatId.set(chatId, []);
     }
 
-    const items = contextoPorChat.get(chatId)!;
-    const vigentes = items.filter(item => ahora - item.timestamp <= ttl);
-    vigentes.push({ texto, timestamp: ahora });
-    contextoPorChat.set(chatId, vigentes);
+    const items = contextByChatId.get(chatId)!;
+    const activeItems = items.filter(item => now - item.timestamp <= ttl);
+    activeItems.push({ text, timestamp: now });
+    contextByChatId.set(chatId, activeItems);
 }
 
-function obtenerContexto(chatId: string): string {
-    const items = contextoPorChat.get(chatId);
+function getChatContext(chatId: string): string {
+    const items = contextByChatId.get(chatId);
     if (!items || items.length === 0) return '';
 
-    const ahora = Date.now();
-    const ttl = TIEMPO_TTL_CONTEXTO;
-    const vigentes = items.filter(item => ahora - item.timestamp <= ttl);
-    contextoPorChat.set(chatId, vigentes);
+    const now = Date.now();
+    const ttl = CONTEXT_TTL_MS;
+    const activeItems = items.filter(item => now - item.timestamp <= ttl);
+    contextByChatId.set(chatId, activeItems);
 
-    return vigentes.map(item => item.texto).join('\n');
+    return activeItems.map(item => item.text).join('\n');
 }
 
-// ── Cola por chat ────────────────────────────────────────────
+// ── Per-Chat Concurrency Queue ───────────────────────────────
 
-async function encolarOperacion(chatId: string, fn: () => Promise<void>): Promise<void> {
-    const anterior = colasPorChat.get(chatId) || Promise.resolve();
-    const actual = anterior.then(fn).catch(err => {
-        logger.error('COLA', `Error en operación de ${chatId}:`, err);
+async function enqueueChatOperation(chatId: string, fn: () => Promise<void>): Promise<void> {
+    const previousOperation = queuesByChatId.get(chatId) || Promise.resolve();
+    const currentOperation = previousOperation.then(fn).catch(err => {
+        logger.error('QUEUE', `Error in serialized queue operation for ${chatId}:`, err);
     });
-    colasPorChat.set(chatId, actual);
-    await actual;
+    queuesByChatId.set(chatId, currentOperation);
+    await currentOperation;
 }
 
-// ── Detección de comprobante ─────────────────────────────────
+// ── Receipt Detection & Helpers ──────────────────────────────
 
-function textoContieneDatosFinancieros(texto: string): boolean {
-    if (!texto || texto === 'SIN_TEXTO_DETECTADO') return false;
-    const t = texto.toLowerCase();
-    return KEYWORDS_FINANCIEROS.some(kw => t.includes(kw));
+function containsFinancialKeywords(text: string): boolean {
+    if (!text || text === 'SIN_TEXTO_DETECTADO') return false;
+    const lowerText = text.toLowerCase();
+    return FINANCIAL_KEYWORDS.some(keyword => lowerText.includes(keyword));
 }
 
-function hoyStr(): string {
+function getTodayFormattedString(): string {
     const d = new Date();
     return `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getFullYear()}`;
 }
 
-// ── Cierre de transacción anterior ───────────────────────────
+// ── Transaction Lifecycle: Closing & Persisting Sales ────────
 
-function tieneDatosUtilesDeVenta(datos: DatosCliente): boolean {
-    const tieneProductos = !!datos.producto && datos.producto !== 'N/A';
-    const tieneCantidades = (datos.cantidadRelojes ?? 0) > 0 || (datos.cantidadOtros ?? 0) > 0;
-    const tieneNombre = !!datos.nombreCliente && datos.nombreCliente !== 'N/A';
-    return tieneProductos || tieneCantidades || tieneNombre;
+function hasUsefulSalesData(data: CustomerData): boolean {
+    const hasProducts = Boolean(data.producto && data.producto !== 'N/A');
+    const hasQuantities = (data.cantidadRelojes ?? 0) > 0 || (data.cantidadOtros ?? 0) > 0;
+    const hasCustomerName = Boolean(data.nombreCliente && data.nombreCliente !== 'N/A');
+    return hasProducts || hasQuantities || hasCustomerName;
 }
 
-async function escribirOMergearVenta(
-    datosCliente: DatosCliente,
-    nPedido: string,
+async function persistOrEnrichSale(
+    customerData: CustomerData,
+    orderNumber: string,
     messageId: string,
-    fecha: string,
-    filaVentaExistente: number | null
+    dateString: string,
+    existingSalesRow: number | null
 ): Promise<void> {
-    const fechaFormateada = formatDate(fecha);
+    const formattedDate = formatDate(dateString);
 
-    if (filaVentaExistente === null) {
-        const filaVenta = await appendSalesRow(datosCliente, nPedido, fechaFormateada);
-        if (filaVenta > 0) {
-            updateSalesRowIndex(messageId, filaVenta);
+    if (existingSalesRow === null) {
+        const newSalesRow = await appendSalesRow(customerData, orderNumber, formattedDate);
+        if (newSalesRow > 0) {
+            updateSalesRowIndex(messageId, newSalesRow);
         }
     } else {
-        await enrichSalesRow(filaVentaExistente, datosCliente);
+        await enrichSalesRow(existingSalesRow, customerData);
     }
 }
 
-async function finalizarTransaccionAnterior(chatId: string): Promise<void> {
-    const transaccion = transaccionActualPorChat.get(chatId);
-    if (!transaccion) return;
+/**
+ * Closes the previously active open transaction by reading accumulated chat context,
+ * invoking Prompt B to extract customer/shipping data, and writing the row to `Ventas`.
+ */
+async function closePreviousTransaction(chatId: string): Promise<void> {
+    const transaction = activeTransactionByChatId.get(chatId);
+    if (!transaction) return;
 
-    const contexto = obtenerContexto(chatId);
+    const contextText = getChatContext(chatId);
 
-    if (!contexto) {
-        contextoPorChat.delete(chatId);
-        transaccionActualPorChat.set(chatId, null);
+    if (!contextText) {
+        contextByChatId.delete(chatId);
+        activeTransactionByChatId.set(chatId, null);
         return;
     }
 
-    logger.info('CIERRE', `Finalizando Ventas de ${transaccion.nPedido} (${contexto.split('\n').length} ítem(s) en contexto)`);
+    logger.info('CLOSE', `Closing Sales for ${transaction.orderNumber} (${contextText.split('\n').length} items in context)`);
 
-    const datosCliente = await extractCustomerDataFromText(contexto);
-    if (!datosCliente) {
-        contextoPorChat.delete(chatId);
-        transaccionActualPorChat.set(chatId, null);
+    const customerData = await extractCustomerDataFromText(contextText);
+    if (!customerData) {
+        contextByChatId.delete(chatId);
+        activeTransactionByChatId.set(chatId, null);
         return;
     }
 
-    const t = findTransactionByMessageId(transaccion.messageId);
-    if (datosCliente.vendedor && datosCliente.vendedor !== 'N/A' && t) {
-        await updateIncomeRow(t.filaIngreso, { vendedor: datosCliente.vendedor });
+    const txRecord = findTransactionByMessageId(transaction.messageId);
+    if (customerData.vendedor && customerData.vendedor !== 'N/A' && txRecord) {
+        await updateIncomeRow(txRecord.filaIngreso, { vendedor: customerData.vendedor });
     }
 
-    if (!tieneDatosUtilesDeVenta(datosCliente)) {
-        logger.info('CIERRE', 'Sin datos útiles para Ventas');
-        contextoPorChat.delete(chatId);
-        transaccionActualPorChat.set(chatId, null);
+    if (!hasUsefulSalesData(customerData)) {
+        logger.info('CLOSE', 'No useful sales data found in context to persist');
+        contextByChatId.delete(chatId);
+        activeTransactionByChatId.set(chatId, null);
         return;
     }
 
-    if (!t) {
-        contextoPorChat.delete(chatId);
-        transaccionActualPorChat.set(chatId, null);
+    if (!txRecord) {
+        contextByChatId.delete(chatId);
+        activeTransactionByChatId.set(chatId, null);
         return;
     }
 
-    await escribirOMergearVenta(datosCliente, transaccion.nPedido, transaccion.messageId, transaccion.fecha, t.filaVenta);
+    await persistOrEnrichSale(customerData, transaction.orderNumber, transaction.messageId, transaction.date, txRecord.filaVenta);
 
-    contextoPorChat.delete(chatId);
-    transaccionActualPorChat.set(chatId, null);
+    contextByChatId.delete(chatId);
+    activeTransactionByChatId.set(chatId, null);
 }
 
-// ── Timer de respaldo ────────────────────────────────────────
+// ── Inactivity Fallback Timer ────────────────────────────────
 
-function programarCierreRespaldo(chatId: string): void {
-    const existente = timersRespaldoPorChat.get(chatId);
-    if (existente) clearTimeout(existente);
+function scheduleFallbackClosingTimer(chatId: string): void {
+    const existingTimer = fallbackTimersByChatId.get(chatId);
+    if (existingTimer) clearTimeout(existingTimer);
 
     const timer = setTimeout(async () => {
-        timersRespaldoPorChat.delete(chatId);
-        await encolarOperacion(chatId, async () => {
-            if (transaccionActualPorChat.get(chatId)) {
-                logger.info('RESPALDO', `Cierre por inactividad (${TIEMPO_CIERRE_RESPALDO / 1000 / 60 / 60}h)`);
-                await finalizarTransaccionAnterior(chatId);
+        fallbackTimersByChatId.delete(chatId);
+        await enqueueChatOperation(chatId, async () => {
+            if (activeTransactionByChatId.get(chatId)) {
+                logger.info('FALLBACK', `Closing active transaction due to inactivity (${FALLBACK_CLOSING_TIMEOUT_MS / 1000 / 60 / 60}h timeout)`);
+                await closePreviousTransaction(chatId);
             }
         });
-    }, TIEMPO_CIERRE_RESPALDO);
+    }, FALLBACK_CLOSING_TIMEOUT_MS);
 
-    timersRespaldoPorChat.set(chatId, timer);
+    fallbackTimersByChatId.set(chatId, timer);
 }
 
-// ── Pipeline de comprobante ──────────────────────────────────
+// ── Image Processing Pipeline ────────────────────────────────
 
-async function preprocesarImagen(media: MediaData): Promise<string> {
-    const imgOptimizada = await optimizeImageForOcr(media.data);
-    return normalizeOcrText(await extractTextWithVisionEnhanced(imgOptimizada));
+async function preprocessImage(media: MediaData): Promise<string> {
+    const optimizedBase64 = await optimizeImageForOcr(media.data);
+    return normalizeOcrText(await extractTextWithVisionEnhanced(optimizedBase64));
 }
 
-function procesarImagenNoComprobante(chatId: string, textoOCR: string): void {
-    if (textoOCR && textoOCR !== 'SIN_TEXTO_DETECTADO' && isUsefulText(textoOCR)) {
-        agregarAlContexto(chatId, textoOCR);
-        logger.info('IMAGEN', `Sin datos financieros → acumulada en contexto (${textoOCR.length} chars)`);
+function handleNonReceiptImage(chatId: string, ocrText: string): void {
+    if (ocrText && ocrText !== 'SIN_TEXTO_DETECTADO' && isUsefulText(ocrText)) {
+        appendToChatContext(chatId, ocrText);
+        logger.info('IMAGE', `Non-financial image OCR text accumulated in context (${ocrText.length} chars)`);
     } else {
-        logger.info('IMAGEN', 'Sin datos financieros — descartada (0 tokens)');
+        logger.info('IMAGE', 'Non-financial image with no useful text — discarded (0 tokens)');
     }
 }
 
-async function procesarComprobante(
-    textoOCR: string,
-    ctx: MensajeEntrante,
-    bancoPorColor?: string
+async function recordIncomeReceipt(
+    incomeData: IncomeData,
+    ctx: IncomingMessage
 ): Promise<void> {
-    logger.info('IMAGEN', 'Datos financieros detectados → OpenAI');
-
-    await finalizarTransaccionAnterior(ctx.chatId);
-
-    const contextoParaPromptA = obtenerContexto(ctx.chatId);
-    const MAX_CONTEXTO_CHARS = 300;
-    const contextoTruncado = contextoParaPromptA.length > MAX_CONTEXTO_CHARS
-        ? contextoParaPromptA.substring(0, MAX_CONTEXTO_CHARS) + '...'
-        : (contextoParaPromptA || 'No hay contexto de texto para esta imagen.');
-
-    const datosExtraidos = await extractAccountingDataFromOcr(textoOCR, contextoTruncado, bancoPorColor);
-
-    if (!datosExtraidos || !datosExtraidos.esComprobanteValido) {
-        logger.info('IMAGEN', 'No es comprobante válido');
+    const result = await appendIncomeRow(incomeData);
+    if (!result) {
+        logger.error('IMAGE', 'Error appending income row to Google Sheets');
         return;
     }
 
-    if (datosExtraidos.referenciaDePago && datosExtraidos.referenciaDePago !== 'N/A') {
-        const existente = findTransactionByPaymentReference(datosExtraidos.referenciaDePago);
-        if (existente) {
-            logger.info('IMAGEN', `Referencia duplicada: ${datosExtraidos.referenciaDePago} = ${existente.nPedido}`);
+    const { nPedido, filaIngreso } = result;
+
+    saveTransaction(ctx.messageId, nPedido, filaIngreso, incomeData.referenciaDePago || null);
+
+    activeTransactionByChatId.set(ctx.chatId, { orderNumber: nPedido, messageId: ctx.messageId, date: incomeData.fecha });
+
+    scheduleFallbackClosingTimer(ctx.chatId);
+
+    logger.info('IMAGE', `✅ ${nPedido} registered (row ${filaIngreso})`);
+}
+
+async function handleReceipt(
+    ocrText: string,
+    ctx: IncomingMessage,
+    bankByColor?: string
+): Promise<void> {
+    logger.info('IMAGE', 'Financial receipt detected -> invoking OpenAI Prompt A');
+
+    await closePreviousTransaction(ctx.chatId);
+
+    const contextForPromptA = getChatContext(ctx.chatId);
+    const MAX_CONTEXT_CHARS = 300;
+    const truncatedContext = contextForPromptA.length > MAX_CONTEXT_CHARS
+        ? contextForPromptA.substring(0, MAX_CONTEXT_CHARS) + '...'
+        : (contextForPromptA || 'No hay contexto de texto para esta imagen.');
+
+    const extractedData = await extractAccountingDataFromOcr(ocrText, truncatedContext, bankByColor);
+
+    if (!extractedData || !extractedData.esComprobanteValido) {
+        logger.info('IMAGE', 'Image rejected as invalid financial receipt');
+        return;
+    }
+
+    if (extractedData.referenciaDePago && extractedData.referenciaDePago !== 'N/A') {
+        const existingTx = findTransactionByPaymentReference(extractedData.referenciaDePago);
+        if (existingTx) {
+            logger.info('IMAGE', `Duplicate payment reference rejected: ${extractedData.referenciaDePago} = ${existingTx.nPedido}`);
             return;
         }
     }
 
-    await registrarComprobante(datosExtraidos, ctx);
+    await recordIncomeReceipt(extractedData, ctx);
 }
 
-async function registrarComprobante(
-    datosExtraidos: DatosIngreso,
-    ctx: MensajeEntrante
-): Promise<void> {
-    const resultado = await appendIncomeRow(datosExtraidos);
-    if (!resultado) {
-        logger.error('IMAGEN', 'Error escribiendo en Google Sheets');
+async function processImageMessage(media: MediaData, ctx: IncomingMessage): Promise<void> {
+    logger.info('IMAGE', 'Processing incoming image payload...');
+
+    const ocrText = await preprocessImage(media);
+
+    if (!containsFinancialKeywords(ocrText)) {
+        handleNonReceiptImage(ctx.chatId, ocrText);
         return;
     }
 
-    const { nPedido, filaIngreso } = resultado;
-
-    saveTransaction(ctx.messageId, nPedido, filaIngreso, datosExtraidos.referenciaDePago || null);
-
-    transaccionActualPorChat.set(ctx.chatId, { nPedido, messageId: ctx.messageId, fecha: datosExtraidos.fecha });
-
-    programarCierreRespaldo(ctx.chatId);
-
-    logger.info('IMAGEN', `✅ ${nPedido} registrado (fila ${filaIngreso})`);
+    const bankByColor = await detectBankByColor(media.data);
+    await handleReceipt(ocrText, ctx, bankByColor);
 }
 
-async function procesarImagen(media: MediaData, ctx: MensajeEntrante): Promise<void> {
-    logger.info('IMAGEN', 'Procesando imagen...');
+// ── Plain Text Processing ────────────────────────────────────
 
-    const textoOCR = await preprocesarImagen(media);
-
-    if (!textoContieneDatosFinancieros(textoOCR)) {
-        procesarImagenNoComprobante(ctx.chatId, textoOCR);
-        return;
-    }
-
-    const bancoPorColor = await detectBankByColor(media.data);
-    await procesarComprobante(textoOCR, ctx, bancoPorColor);
+async function processPlainTextMessage(ctx: IncomingMessage): Promise<void> {
+    appendToChatContext(ctx.chatId, ctx.body);
+    logger.info('TEXT', `-> accumulated in context: "${ctx.body.substring(0, 50)}..."`);
 }
 
-// ── Procesamiento de texto (sin reply) ───────────────────────
+// ── Quoted / Reply Text Processing ───────────────────────────
 
-async function procesarTextoSinReply(ctx: MensajeEntrante): Promise<void> {
-    agregarAlContexto(ctx.chatId, ctx.body);
-    logger.info('TEXTO', `→ contexto: "${ctx.body.substring(0, 50)}..."`);
-}
-
-// ── Procesamiento de texto (con reply) ───────────────────────
-
-async function procesarTextoConReply(ctx: MensajeEntrante): Promise<void> {
+async function processQuotedTextMessage(ctx: IncomingMessage): Promise<void> {
     const quotedId = ctx.quotedMsgId;
     if (!quotedId) {
-        logger.warn('REPLY', 'Sin quotedMsgId → contexto');
-        agregarAlContexto(ctx.chatId, ctx.body);
+        logger.warn('REPLY', 'Missing quotedMsgId -> appending to context');
+        appendToChatContext(ctx.chatId, ctx.body);
         return;
     }
 
-    const transaccionActual = transaccionActualPorChat.get(ctx.chatId);
-    if (transaccionActual && transaccionActual.messageId === quotedId) {
-        agregarAlContexto(ctx.chatId, ctx.body);
-        logger.info('REPLY', `Asociado a transacción activa ${transaccionActual.nPedido}`);
+    const activeTransaction = activeTransactionByChatId.get(ctx.chatId);
+    if (activeTransaction && activeTransaction.messageId === quotedId) {
+        appendToChatContext(ctx.chatId, ctx.body);
+        logger.info('REPLY', `Associated with active open transaction ${activeTransaction.orderNumber}`);
 
-        const datosCliente = await extractCustomerDataFromText(ctx.body);
-        if (!datosCliente) return;
+        const customerData = await extractCustomerDataFromText(ctx.body);
+        if (!customerData) return;
 
-        const t = findTransactionByMessageId(transaccionActual.messageId);
-        if (t && datosCliente.vendedor && datosCliente.vendedor !== 'N/A') {
-            await updateIncomeRow(t.filaIngreso, { vendedor: datosCliente.vendedor });
+        const txRecord = findTransactionByMessageId(activeTransaction.messageId);
+        if (txRecord && customerData.vendedor && customerData.vendedor !== 'N/A') {
+            await updateIncomeRow(txRecord.filaIngreso, { vendedor: customerData.vendedor });
         }
 
-        if (!tieneDatosUtilesDeVenta(datosCliente)) return;
-        if (!t) return;
+        if (!hasUsefulSalesData(customerData)) return;
+        if (!txRecord) return;
 
-        await escribirOMergearVenta(datosCliente, transaccionActual.nPedido, transaccionActual.messageId, transaccionActual.fecha, t.filaVenta);
+        await persistOrEnrichSale(customerData, activeTransaction.orderNumber, activeTransaction.messageId, activeTransaction.date, txRecord.filaVenta);
         return;
     }
 
-    const patronCorreccionCampoValor = /^(?<campo>tipo|vendedor):\s*(?<valor>.+)$/i;
-    const matchCorreccion = ctx.body.match(patronCorreccionCampoValor);
-    const campoGrupo = matchCorreccion?.groups?.campo;
-    const valorGrupo = matchCorreccion?.groups?.valor;
-    if (campoGrupo && valorGrupo) {
-        const campo = campoGrupo.toLowerCase() as 'tipo' | 'vendedor';
-        const valor = valorGrupo.trim();
-        const textoCitado = ctx.quotedBody || '';
-        const matchNPedido = textoCitado.match(/LG-\d+/);
-        if (matchNPedido && matchNPedido[0]) {
-            const t = findTransactionByOrderNumber(matchNPedido[0]);
-            if (t) {
-                await updateIncomeRow(t.filaIngreso, { [campo]: valor });
+    // Direct field corrections: "tipo: Abono" or "vendedor: Karol"
+    const fieldCorrectionPattern = /^(?<field>tipo|vendedor):\s*(?<value>.+)$/i;
+    const correctionMatch = ctx.body.match(fieldCorrectionPattern);
+    const fieldGroup = correctionMatch?.groups?.field;
+    const valueGroup = correctionMatch?.groups?.value;
+
+    if (fieldGroup && valueGroup) {
+        const fieldName = fieldGroup.toLowerCase() as 'tipo' | 'vendedor';
+        const fieldValue = valueGroup.trim();
+        const quotedText = ctx.quotedBody || '';
+        const orderIdMatch = quotedText.match(/LG-\d+/);
+
+        if (orderIdMatch && orderIdMatch[0]) {
+            const txByOrder = findTransactionByOrderNumber(orderIdMatch[0]);
+            if (txByOrder) {
+                await updateIncomeRow(txByOrder.filaIngreso, { [fieldName]: fieldValue });
                 return;
             }
         }
 
-        const t = findTransactionByMessageId(quotedId);
-        if (t) {
-            await updateIncomeRow(t.filaIngreso, { [campo]: valor });
+        const txByMsgId = findTransactionByMessageId(quotedId);
+        if (txByMsgId) {
+            await updateIncomeRow(txByMsgId.filaIngreso, { [fieldName]: fieldValue });
             return;
         }
     }
 
-    const transaccion = findTransactionByMessageId(quotedId);
-    if (transaccion) {
-        logger.info('REPLY', `Reply tardío para ${transaccion.nPedido}`);
-        const datosCliente = await extractCustomerDataFromText(ctx.body);
-        if (!datosCliente) return;
+    // Late reply to an already-closed transaction
+    const closedTransaction = findTransactionByMessageId(quotedId);
+    if (closedTransaction) {
+        logger.info('REPLY', `Late reply for closed transaction ${closedTransaction.nPedido}`);
+        const customerData = await extractCustomerDataFromText(ctx.body);
+        if (!customerData) return;
 
-        if (datosCliente.vendedor && datosCliente.vendedor !== 'N/A') {
-            await updateIncomeRow(transaccion.filaIngreso, { vendedor: datosCliente.vendedor });
+        if (customerData.vendedor && customerData.vendedor !== 'N/A') {
+            await updateIncomeRow(closedTransaction.filaIngreso, { vendedor: customerData.vendedor });
         }
 
-        if (!tieneDatosUtilesDeVenta(datosCliente)) return;
+        if (!hasUsefulSalesData(customerData)) return;
 
-        await escribirOMergearVenta(datosCliente, transaccion.nPedido, transaccion.messageId, hoyStr(), transaccion.filaVenta);
+        await persistOrEnrichSale(customerData, closedTransaction.nPedido, closedTransaction.messageId, getTodayFormattedString(), closedTransaction.filaVenta);
         return;
     }
 
-    logger.info('REPLY', 'Sin transacción conocida → contexto');
-    agregarAlContexto(ctx.chatId, ctx.body);
+    logger.info('REPLY', 'No known transaction found for quoted message -> accumulating in context');
+    appendToChatContext(ctx.chatId, ctx.body);
 }
 
-// ── Entrada principal ────────────────────────────────────────
+// ── Main Entry Point ─────────────────────────────────────────
 
-export const procesarMensajeEntrante = async (ctx: MensajeEntrante) => {
-    await encolarOperacion(ctx.chatId, async () => {
+/**
+ * Main event dispatcher for incoming WhatsApp messages.
+ * Enqueues operations per chat to prevent concurrency race conditions.
+ * 
+ * @param ctx - Incoming message payload.
+ */
+export const processIncomingMessage = async (ctx: IncomingMessage) => {
+    await enqueueChatOperation(ctx.chatId, async () => {
         if (ctx.hasMedia) {
             if (!ctx.media || !ctx.media.mimetype.includes('image') || ctx.media.mimetype.includes('webp')) {
                 return;
             }
 
             if (ctx.hasQuotedMsg && ctx.quotedMsgId) {
-                const transaccion = findTransactionByMessageId(ctx.quotedMsgId);
-                if (transaccion) {
-                    logger.info('REPLY', `Imagen reply descartada para ${transaccion.nPedido}`);
+                const existingTx = findTransactionByMessageId(ctx.quotedMsgId);
+                if (existingTx) {
+                    logger.info('REPLY', `Image reply discarded for ${existingTx.nPedido}`);
                     return;
                 }
             }
 
-            await procesarImagen(ctx.media, ctx);
+            await processImageMessage(ctx.media, ctx);
             return;
         }
 
         if (ctx.body) {
             if (ctx.hasQuotedMsg) {
-                await procesarTextoConReply(ctx);
+                await processQuotedTextMessage(ctx);
             } else {
-                await procesarTextoSinReply(ctx);
+                await processPlainTextMessage(ctx);
             }
         }
     });
 };
+
+// Backward-compatible alias
+export const procesarMensajeEntrante = processIncomingMessage;
