@@ -11,58 +11,96 @@ dotenv.config();
 
 const SPREADSHEET_ID = (() => {
     const id = process.env.GOOGLE_SHEETS_ID;
-    if (!id) throw new Error('GOOGLE_SHEETS_ID no está definido en las variables de entorno');
-    return id;
+    if (!id && process.env.NODE_ENV !== 'test') {
+        throw new Error('GOOGLE_SHEETS_ID is not defined in environment variables');
+    }
+    return id || 'TEST_SPREADSHEET_ID';
 })();
 
-let sheetsClientPromise: ReturnType<typeof inicializarGoogleSheets> | null = null;
+let sheetsClientPromise: Promise<any> | null = null;
 
-const inicializarGoogleSheets = async () => {
+const initGoogleSheetsClient = async () => {
     const auth = new google.auth.GoogleAuth({
         keyFile: path.join(__dirname, '../../google-keys.json'),
         scopes: ['https://www.googleapis.com/auth/spreadsheets'],
     });
 
-    const cliente = await auth.getClient();
-    // googleapis-common bundles its own google-auth-library version,
-    // causing TS to reject type assertion to a narrower type. `any` is the pragmatic cast.
-    return google.sheets({ version: 'v4', auth: cliente as any });
+    const client = await auth.getClient();
+    return google.sheets({ version: 'v4', auth: client as any });
 };
 
-export const obtenerSheets = async () => {
+/**
+ * Retrieves or initializes the singleton Google Sheets v4 API client.
+ */
+export const getSheetsClient = async () => {
     if (!sheetsClientPromise) {
-        sheetsClientPromise = inicializarGoogleSheets();
-        logger.info('SHEETS', 'Cliente de Google Sheets inicializado (singleton)');
+        sheetsClientPromise = initGoogleSheetsClient();
+        logger.info('SHEETS', 'Google Sheets client initialized (singleton)');
     }
     return sheetsClientPromise;
 };
 
-const extraerNumeroFila = (updatedRange: string | undefined | null): number => {
+// Backward-compatible alias
+export const obtenerSheets = getSheetsClient;
+
+/**
+ * Injects a mock Google Sheets client for isolated testing.
+ */
+export function _setSheetsClientForTesting(client: any): void {
+    sheetsClientPromise = Promise.resolve(client);
+}
+
+/**
+ * Resets the cached Google Sheets client singleton.
+ */
+export function _resetSheetsClientForTesting(): void {
+    sheetsClientPromise = null;
+}
+
+const extractRowNumber = (updatedRange: string | undefined | null): number => {
     if (!updatedRange) return 0;
     const match = updatedRange.match(/!?[A-Z]+(\d+)/);
     return match?.[1] ? parseInt(match[1], 10) : 0;
 };
 
-export const escribirFilaEnExcel = async (datosJSON: DatosIngreso): Promise<{ nPedido: string; filaIngreso: number } | null> => {
+/**
+ * Appends a new financial transaction row to the `Ingresos transacciones` Google Sheet (Columns A–I).
+ * 
+ * Column Schema:
+ * - A: N.Pedido (`LG-XXX`)
+ * - B: Date (`D-Mes-YYYY`)
+ * - C: Type (`Ingreso` / `Abono`)
+ * - D: Description (`Pedido al por menor`)
+ * - E: Price / Amount
+ * - F: Payment Method (`Nequi`, `Bancolombia`, etc.)
+ * - G: Payment Reference
+ * - H: Destination Account (`XXX XXX XXXX`)
+ * - I: Vendor (`Karol`, `JHON`, etc.)
+ * 
+ * @param incomeData - Extracted and sanitized income transaction data.
+ * @returns Object containing the generated `nPedido` and 1-based `filaIngreso` row number, or null on failure.
+ */
+export const appendIncomeRow = async (
+    incomeData: DatosIngreso
+): Promise<{ nPedido: string; filaIngreso: number } | null> => {
     try {
         return await executeWithRetry(async () => {
-            const sheets = await obtenerSheets();
+            const sheets = await getSheetsClient();
+            const newOrderId = await generateNextOrderNumber();
 
-            const nuevoId = await generateNextOrderNumber();
+            const cleanDate = formatDate(incomeData.fecha);
+            const cleanAccount = formatAccountNumber(incomeData.cuentaDestino);
 
-            const fechaLimpia = formatDate(datosJSON.fecha);
-            const cuentaLimpia = formatAccountNumber(datosJSON.cuentaDestino);
-
-            const filaDeDatos = [
-                nuevoId,
-                fechaLimpia,
-                datosJSON.tipo || "Ingreso",
-                datosJSON.descripcion || "Pedido al por menor",
-                datosJSON.precioCompra,
-                datosJSON.medioDePago,
-                datosJSON.referenciaDePago,
-                cuentaLimpia,
-                datosJSON.vendedor || "JHON",
+            const rowData = [
+                newOrderId,
+                cleanDate,
+                incomeData.tipo || "Ingreso",
+                incomeData.descripcion || "Pedido al por menor",
+                incomeData.precioCompra,
+                incomeData.medioDePago,
+                incomeData.referenciaDePago,
+                cleanAccount,
+                incomeData.vendedor || "JHON",
             ];
 
             const appendResponse = await sheets.spreadsheets.values.append({
@@ -70,146 +108,191 @@ export const escribirFilaEnExcel = async (datosJSON: DatosIngreso): Promise<{ nP
                 range: 'Ingresos transacciones!A:I',
                 valueInputOption: 'USER_ENTERED',
                 insertDataOption: 'INSERT_ROWS',
-                requestBody: { values: [filaDeDatos] },
+                requestBody: { values: [rowData] },
             });
 
             const updatedRange: string | undefined | null = appendResponse.data.updates?.updatedRange;
-            const filaIngreso = extraerNumeroFila(updatedRange);
+            const incomeRowIndex = extractRowNumber(updatedRange);
 
-            logger.info('SHEETS', `Fila creada: ${nuevoId} (fila ${filaIngreso})`);
-            return { nPedido: nuevoId, filaIngreso };
+            logger.info('SHEETS', `Income row created: ${newOrderId} (row ${incomeRowIndex})`);
+            return { nPedido: newOrderId, filaIngreso: incomeRowIndex };
         });
     } catch (error) {
-        logger.error('SHEETS', 'Error escribiendo fila (agotados reintentos):', error);
+        logger.error('SHEETS', 'Error appending income row (exhausted retries):', error);
         return null;
     }
 };
 
+// Backward-compatible alias
+export const escribirFilaEnExcel = appendIncomeRow;
 
-export const escribirFilaVenta = async (
-    datosCliente: DatosCliente,
-    nPedido: string,
-    fecha: string
+/**
+ * Appends a new sales record row to the `Ventas` Google Sheet (Columns A–J).
+ * Resolves the Colombian department automatically from the municipality string.
+ * 
+ * Column Schema:
+ * - A: N.Pedido (`LG-XXX`)
+ * - B: Date
+ * - C: Customer Name
+ * - D: Email
+ * - E: Phone
+ * - F: Municipality
+ * - G: Department
+ * - H: Product Details
+ * - I: Watch Quantity
+ * - J: Other Accessories Quantity
+ * 
+ * @param customerData - Extracted customer, address, and product details.
+ * @param orderNumber - The associated `LG-XXX` order identifier.
+ * @param formattedDate - Transaction date string.
+ * @returns 1-based row number in the `Ventas` sheet, or -1 on failure.
+ */
+export const appendSalesRow = async (
+    customerData: DatosCliente,
+    orderNumber: string,
+    formattedDate: string
 ): Promise<number> => {
     try {
         return await executeWithRetry(async () => {
-            const sheets = await obtenerSheets();
-            const hojaVentas = process.env.SHEETS_VENTAS_NOMBRE || 'Ventas';
+            const sheets = await getSheetsClient();
+            const salesSheetName = process.env.SHEETS_VENTAS_NOMBRE || 'Ventas';
 
-            const departamento = getDepartment(datosCliente.municipio || '');
+            const department = getDepartment(customerData.municipio || '');
 
-            const filaDeDatos = [
-                nPedido,
-                fecha,
-                datosCliente.nombreCliente  || 'N/A',
-                datosCliente.email          || 'N/A',
-                datosCliente.telefono       || 'N/A',
-                datosCliente.municipio      || 'N/A',
-                departamento,
-                datosCliente.producto       || 'N/A',
-                datosCliente.cantidadRelojes ?? 0,
-                datosCliente.cantidadOtros  ?? 0,
+            const rowData = [
+                orderNumber,
+                formattedDate,
+                customerData.nombreCliente  || 'N/A',
+                customerData.email          || 'N/A',
+                customerData.telefono       || 'N/A',
+                customerData.municipio      || 'N/A',
+                department,
+                customerData.producto       || 'N/A',
+                customerData.cantidadRelojes ?? 0,
+                customerData.cantidadOtros  ?? 0,
             ];
 
             const appendResponse = await sheets.spreadsheets.values.append({
                 spreadsheetId: SPREADSHEET_ID,
-                range: `${hojaVentas}!A:J`,
+                range: `${salesSheetName}!A:J`,
                 valueInputOption: 'USER_ENTERED',
                 insertDataOption: 'INSERT_ROWS',
-                requestBody: { values: [filaDeDatos] },
+                requestBody: { values: [rowData] },
             });
 
             const updatedRange: string | undefined | null = appendResponse.data.updates?.updatedRange;
-            const numeroFilaNueva = extraerNumeroFila(updatedRange);
+            const salesRowIndex = extractRowNumber(updatedRange);
 
-            logger.info('SHEETS', `Ventas fila ${numeroFilaNueva} creada para ${nPedido}`);
-            return numeroFilaNueva;
+            logger.info('SHEETS', `Sales row ${salesRowIndex} created for ${orderNumber}`);
+            return salesRowIndex;
         });
     } catch (error) {
-        logger.error('SHEETS', 'Error escribiendo fila de venta (agotados reintentos):', error);
+        logger.error('SHEETS', 'Error appending sales row (exhausted retries):', error);
         return -1;
     }
 };
 
-export const mergeFilaVenta = async (
-    filaVenta: number,
-    datosNuevos: DatosCliente
+// Backward-compatible alias
+export const escribirFilaVenta = appendSalesRow;
+
+/**
+ * Non-destructively enriches an existing sales row in the `Ventas` sheet.
+ * Reads current row data and only fills blank or 'N/A' cells with new incoming information,
+ * preventing accidental overwriting of confirmed data.
+ * 
+ * @param salesRowIndex - 1-based row index in the `Ventas` sheet.
+ * @param incomingData - Fresh customer/product data extracted from a late WhatsApp message.
+ */
+export const enrichSalesRow = async (
+    salesRowIndex: number,
+    incomingData: DatosCliente
 ): Promise<void> => {
     try {
         await executeWithRetry(async () => {
-            const sheets = await obtenerSheets();
-            const hojaVentas = process.env.SHEETS_VENTAS_NOMBRE || 'Ventas';
+            const sheets = await getSheetsClient();
+            const salesSheetName = process.env.SHEETS_VENTAS_NOMBRE || 'Ventas';
 
-            const lecturaActual = await sheets.spreadsheets.values.get({
+            const currentRead = await sheets.spreadsheets.values.get({
                 spreadsheetId: SPREADSHEET_ID,
-                range: `${hojaVentas}!A${filaVenta}:J${filaVenta}`,
+                range: `${salesSheetName}!A${salesRowIndex}:J${salesRowIndex}`,
             });
 
-            const filaActual: string[] = lecturaActual.data.values?.[0] || [];
+            const currentRow: string[] = currentRead.data.values?.[0] || [];
 
-            const estaVacio = (valor: string | undefined): boolean => {
-                if (valor === undefined || valor === null) return true;
-                const limpio = valor.toString().trim().toUpperCase();
-                return limpio === '' || limpio === 'N/A' || limpio === '0';
+            const isEmptyValue = (value: string | undefined): boolean => {
+                if (value === undefined || value === null) return true;
+                const clean = value.toString().trim().toUpperCase();
+                return clean === '' || clean === 'N/A' || clean === '0';
             };
 
-            const deptoNuevo = getDepartment(datosNuevos.municipio || '');
+            const newDepartment = getDepartment(incomingData.municipio || '');
 
-            const filaFinal = [
-                filaActual[0] || '',
-                filaActual[1] || '',
-                estaVacio(filaActual[2]) ? (datosNuevos.nombreCliente  || 'N/A') : filaActual[2],
-                estaVacio(filaActual[3]) ? (datosNuevos.email          || 'N/A') : filaActual[3],
-                estaVacio(filaActual[4]) ? (datosNuevos.telefono       || 'N/A') : filaActual[4],
-                estaVacio(filaActual[5]) ? (datosNuevos.municipio      || 'N/A') : filaActual[5],
-                estaVacio(filaActual[6]) ? deptoNuevo                             : filaActual[6],
-                estaVacio(filaActual[7]) ? (datosNuevos.producto       || 'N/A') : filaActual[7],
-                estaVacio(filaActual[8]) ? (datosNuevos.cantidadRelojes ?? 0)    : filaActual[8],
-                estaVacio(filaActual[9]) ? (datosNuevos.cantidadOtros  ?? 0)    : filaActual[9],
+            const finalRow = [
+                currentRow[0] || '',
+                currentRow[1] || '',
+                isEmptyValue(currentRow[2]) ? (incomingData.nombreCliente  || 'N/A') : currentRow[2],
+                isEmptyValue(currentRow[3]) ? (incomingData.email          || 'N/A') : currentRow[3],
+                isEmptyValue(currentRow[4]) ? (incomingData.telefono       || 'N/A') : currentRow[4],
+                isEmptyValue(currentRow[5]) ? (incomingData.municipio      || 'N/A') : currentRow[5],
+                isEmptyValue(currentRow[6]) ? newDepartment                         : currentRow[6],
+                isEmptyValue(currentRow[7]) ? (incomingData.producto       || 'N/A') : currentRow[7],
+                isEmptyValue(currentRow[8]) ? (incomingData.cantidadRelojes ?? 0)    : currentRow[8],
+                isEmptyValue(currentRow[9]) ? (incomingData.cantidadOtros  ?? 0)    : currentRow[9],
             ];
 
             await sheets.spreadsheets.values.update({
                 spreadsheetId: SPREADSHEET_ID,
-                range: `${hojaVentas}!A${filaVenta}:J${filaVenta}`,
+                range: `${salesSheetName}!A${salesRowIndex}:J${salesRowIndex}`,
                 valueInputOption: 'USER_ENTERED',
-                requestBody: { values: [filaFinal] },
+                requestBody: { values: [finalRow] },
             });
 
-            logger.info('SHEETS', `Ventas fila ${filaVenta} mergeada`);
+            logger.info('SHEETS', `Sales row ${salesRowIndex} enriched successfully`);
         });
     } catch (error) {
-        logger.error('SHEETS', 'Error en merge de venta (agotados reintentos):', error);
+        logger.error('SHEETS', 'Error enriching sales row (exhausted retries):', error);
     }
 };
 
-export const actualizarFilaIngreso = async (
-    filaIngreso: number,
-    campos: DatosIngresoParcial
+// Backward-compatible alias
+export const mergeFilaVenta = enrichSalesRow;
+
+/**
+ * Updates specific columns (tipo, descripcion, vendedor) of an existing income row.
+ * 
+ * @param incomeRowIndex - 1-based row index in `Ingresos transacciones`.
+ * @param fieldsToUpdate - Object containing partial field updates.
+ */
+export const updateIncomeRow = async (
+    incomeRowIndex: number,
+    fieldsToUpdate: DatosIngresoParcial
 ): Promise<void> => {
     try {
         await executeWithRetry(async () => {
-            const sheets = await obtenerSheets();
+            const sheets = await getSheetsClient();
 
-            const mapColumnas: Record<string, string> = {
+            const columnMap: Record<string, string> = {
                 tipo:        'C',
                 descripcion: 'D',
                 vendedor:    'I',
             };
 
-            const data: { range: string; values: string[][] }[] = [];
+            const updateData: { range: string; values: string[][] }[] = [];
 
-            for (const [campo, valor] of Object.entries(campos)) {
-                if (valor !== undefined && valor !== null) {
-                    const col = mapColumnas[campo];
-                    data.push({
-                        range: `Ingresos transacciones!${col}${filaIngreso}`,
-                        values: [[valor]],
-                    });
+            for (const [field, value] of Object.entries(fieldsToUpdate)) {
+                if (value !== undefined && value !== null) {
+                    const col = columnMap[field];
+                    if (col) {
+                        updateData.push({
+                            range: `Ingresos transacciones!${col}${incomeRowIndex}`,
+                            values: [[value]],
+                        });
+                    }
                 }
             }
 
-            if (data.length === 0) {
-                logger.warn('SHEETS', 'actualizarFilaIngreso: ningún campo válido');
+            if (updateData.length === 0) {
+                logger.warn('SHEETS', 'updateIncomeRow: no valid fields provided');
                 return;
             }
 
@@ -217,18 +300,21 @@ export const actualizarFilaIngreso = async (
                 spreadsheetId: SPREADSHEET_ID,
                 requestBody: {
                     valueInputOption: 'USER_ENTERED',
-                    data,
+                    data: updateData,
                 },
             });
 
-            logger.info('SHEETS', `Ingreso fila ${filaIngreso} actualizado: ${Object.keys(campos).join(', ')}`);
+            logger.info('SHEETS', `Income row ${incomeRowIndex} updated: ${Object.keys(fieldsToUpdate).join(', ')}`);
         });
     } catch (error) {
-        logger.error('SHEETS', 'Error actualizando fila de ingreso (agotados reintentos):', error);
+        logger.error('SHEETS', 'Error updating income row (exhausted retries):', error);
     }
 };
 
-export interface FilaIngreso {
+// Backward-compatible alias
+export const actualizarFilaIngreso = updateIncomeRow;
+
+export interface IncomeRow {
     fila: number;
     nPedido: string;
     fecha: string;
@@ -241,17 +327,29 @@ export interface FilaIngreso {
     vendedor: string;
 }
 
-export interface FilaVenta {
+// Backward-compatible alias
+export type FilaIngreso = IncomeRow;
+
+export interface SalesRow {
     fila: number;
     nPedido: string;
     cantidadRelojes: number;
     cantidadOtros: number;
 }
 
-export const obtenerUltimoNPedido = async (): Promise<number | null> => {
+// Backward-compatible alias
+export type FilaVenta = SalesRow;
+
+/**
+ * Scans Column A of `Ingresos transacciones` from bottom up to discover the latest numerical order ID (`LG-XXX`).
+ * Used at startup to synchronize SQLite's sequence counter with Google Sheets.
+ * 
+ * @returns Highest numerical order ID found, or null if empty.
+ */
+export const getLatestOrderNumberFromSheets = async (): Promise<number | null> => {
     try {
         return await executeWithRetry(async () => {
-            const sheets = await obtenerSheets();
+            const sheets = await getSheetsClient();
 
             const response = await sheets.spreadsheets.values.get({
                 spreadsheetId: SPREADSHEET_ID,
@@ -260,9 +358,9 @@ export const obtenerUltimoNPedido = async (): Promise<number | null> => {
 
             const rows = response.data.values || [];
             for (let i = rows.length - 1; i >= 0; i--) {
-                const valor = rows[i]?.[0];
-                if (valor) {
-                    const match = String(valor).match(/LG-(\d+)/);
+                const value = rows[i]?.[0];
+                if (value) {
+                    const match = String(value).match(/LG-(\d+)/);
                     if (match && match[1]) {
                         return parseInt(match[1], 10);
                     }
@@ -271,15 +369,23 @@ export const obtenerUltimoNPedido = async (): Promise<number | null> => {
             return null;
         });
     } catch (error) {
-        logger.error('SHEETS', 'Error obteniendo último nPedido:', error);
+        logger.error('SHEETS', 'Error getting latest order number from Sheets:', error);
         return null;
     }
 };
 
-export const leerIngresosTransacciones = async (): Promise<FilaIngreso[]> => {
+// Backward-compatible alias
+export const obtenerUltimoNPedido = getLatestOrderNumberFromSheets;
+
+/**
+ * Reads all transaction records from `Ingresos transacciones!A:I`, skipping the header row.
+ * 
+ * @returns Array of IncomeRow objects with 1-based sheet row indices.
+ */
+export const readIncomeRows = async (): Promise<IncomeRow[]> => {
     try {
         return await executeWithRetry(async () => {
-            const sheets = await obtenerSheets();
+            const sheets = await getSheetsClient();
 
             const response = await sheets.spreadsheets.values.get({
                 spreadsheetId: SPREADSHEET_ID,
@@ -303,20 +409,28 @@ export const leerIngresosTransacciones = async (): Promise<FilaIngreso[]> => {
             }));
         });
     } catch (error) {
-        logger.error('SHEETS', 'Error leyendo Ingresos transacciones:', error);
+        logger.error('SHEETS', 'Error reading income rows from Sheets:', error);
         return [];
     }
 };
 
-export const leerVentas = async (): Promise<FilaVenta[]> => {
+// Backward-compatible alias
+export const leerIngresosTransacciones = readIncomeRows;
+
+/**
+ * Reads all sales records from `Ventas!A:J`, skipping the header row.
+ * 
+ * @returns Array of SalesRow objects with parsed item quantities.
+ */
+export const readSalesRows = async (): Promise<SalesRow[]> => {
     try {
         return await executeWithRetry(async () => {
-            const sheets = await obtenerSheets();
-            const hojaVentas = process.env.SHEETS_VENTAS_NOMBRE || 'Ventas';
+            const sheets = await getSheetsClient();
+            const salesSheetName = process.env.SHEETS_VENTAS_NOMBRE || 'Ventas';
 
             const response = await sheets.spreadsheets.values.get({
                 spreadsheetId: SPREADSHEET_ID,
-                range: `${hojaVentas}!A:J`,
+                range: `${salesSheetName}!A:J`,
             });
 
             const rows = response.data.values || [];
@@ -330,11 +444,12 @@ export const leerVentas = async (): Promise<FilaVenta[]> => {
             }));
         });
     } catch (error) {
-        logger.error('SHEETS', 'Error leyendo Ventas:', error);
+        logger.error('SHEETS', 'Error reading sales rows from Sheets:', error);
         return [];
     }
 };
 
-registerSequenceSyncCallback(obtenerUltimoNPedido);
+// Backward-compatible alias
+export const leerVentas = readSalesRows;
 
-
+registerSequenceSyncCallback(getLatestOrderNumberFromSheets);

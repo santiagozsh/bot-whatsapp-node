@@ -1,6 +1,6 @@
 import { initializeWhatsApp, whatsappClient, whatsappDestroy, verificarVersionBaileys } from './services/whatsapp.service';
 import { initDatabase, closeDatabase, getSequenceValue, setSequenceValue } from './services/memory.service';
-import { obtenerUltimoNPedido } from './services/sheets.service';
+import { getLatestOrderNumberFromSheets } from './services/sheets.service';
 import { clasificarPedidosDelDia } from './services/classifier.service';
 import { logger } from './utils/logger';
 
@@ -9,7 +9,7 @@ async function iniciarServidor() {
     initDatabase();
 
     try {
-        const ultimo = await obtenerUltimoNPedido();
+        const ultimo = await getLatestOrderNumberFromSheets();
         if (ultimo !== null) {
             const valorActual = getSequenceValue();
             if (ultimo > valorActual) {

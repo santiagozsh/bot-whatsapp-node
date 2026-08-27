@@ -1,6 +1,6 @@
-import { leerIngresosTransacciones, leerVentas, actualizarFilaIngreso } from './sheets.service';
+import { readIncomeRows, readSalesRows, updateIncomeRow } from './sheets.service';
 import { logger } from '../utils/logger';
-import type { FilaVenta } from './sheets.service';
+import type { SalesRow } from './sheets.service';
 
 const MESES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
 
@@ -20,9 +20,9 @@ const parsearPrecio = (precio: string): number => {
 export const clasificarPedidosDelDia = async (): Promise<void> => {
     logger.info('CLASSIFIER', 'Iniciando clasificación diaria...');
 
-    const [ingresos, ventas] = await Promise.all([leerIngresosTransacciones(), leerVentas()]);
+    const [ingresos, ventas] = await Promise.all([readIncomeRows(), readSalesRows()]);
 
-    const ventasPorPedido = new Map<string, FilaVenta>();
+    const ventasPorPedido = new Map<string, SalesRow>();
     for (const venta of ventas) {
         if (venta.nPedido) {
             ventasPorPedido.set(venta.nPedido, venta);
@@ -49,7 +49,7 @@ export const clasificarPedidosDelDia = async (): Promise<void> => {
         }
 
         if (ingreso.descripcion !== clasificacion) {
-            await actualizarFilaIngreso(ingreso.fila, { descripcion: clasificacion });
+            await updateIncomeRow(ingreso.fila, { descripcion: clasificacion });
             logger.info('CLASSIFIER', `${ingreso.nPedido}: "${ingreso.descripcion}" → "${clasificacion}"`);
             actualizados++;
         }

@@ -1,5 +1,5 @@
 import { extraerDatosDesdeTextoOCR, extraerDatosCliente, optimizarImagenParaOCR } from '../services/ai.service';
-import { escribirFilaEnExcel, escribirFilaVenta, mergeFilaVenta, actualizarFilaIngreso } from '../services/sheets.service';
+import { appendIncomeRow, appendSalesRow, enrichSalesRow, updateIncomeRow } from '../services/sheets.service';
 import { saveTransaction, updateSalesRowIndex, findTransactionByMessageId, findTransactionByPaymentReference, findTransactionByOrderNumber } from '../services/memory.service';
 import { extraerTextoConVisionMejorado } from '../services/vision.service';
 import { formatDate, normalizeOcrText, isUsefulText, detectBankByColor } from '../utils/helpers';
@@ -130,12 +130,12 @@ async function escribirOMergearVenta(
     const fechaFormateada = formatDate(fecha);
 
     if (filaVentaExistente === null) {
-        const filaVenta = await escribirFilaVenta(datosCliente, nPedido, fechaFormateada);
+        const filaVenta = await appendSalesRow(datosCliente, nPedido, fechaFormateada);
         if (filaVenta > 0) {
             updateSalesRowIndex(messageId, filaVenta);
         }
     } else {
-        await mergeFilaVenta(filaVentaExistente, datosCliente);
+        await enrichSalesRow(filaVentaExistente, datosCliente);
     }
 }
 
@@ -162,7 +162,7 @@ async function finalizarTransaccionAnterior(chatId: string): Promise<void> {
 
     const t = findTransactionByMessageId(transaccion.messageId);
     if (datosCliente.vendedor && datosCliente.vendedor !== 'N/A' && t) {
-        await actualizarFilaIngreso(t.filaIngreso, { vendedor: datosCliente.vendedor });
+        await updateIncomeRow(t.filaIngreso, { vendedor: datosCliente.vendedor });
     }
 
     if (!tieneDatosUtilesDeVenta(datosCliente)) {
@@ -256,7 +256,7 @@ async function registrarComprobante(
     datosExtraidos: DatosIngreso,
     ctx: MensajeEntrante
 ): Promise<void> {
-    const resultado = await escribirFilaEnExcel(datosExtraidos);
+    const resultado = await appendIncomeRow(datosExtraidos);
     if (!resultado) {
         logger.error('IMAGEN', 'Error escribiendo en Google Sheets');
         return;
@@ -314,7 +314,7 @@ async function procesarTextoConReply(ctx: MensajeEntrante): Promise<void> {
 
         const t = findTransactionByMessageId(transaccionActual.messageId);
         if (t && datosCliente.vendedor && datosCliente.vendedor !== 'N/A') {
-            await actualizarFilaIngreso(t.filaIngreso, { vendedor: datosCliente.vendedor });
+            await updateIncomeRow(t.filaIngreso, { vendedor: datosCliente.vendedor });
         }
 
         if (!tieneDatosUtilesDeVenta(datosCliente)) return;
@@ -336,14 +336,14 @@ async function procesarTextoConReply(ctx: MensajeEntrante): Promise<void> {
         if (matchNPedido && matchNPedido[0]) {
             const t = findTransactionByOrderNumber(matchNPedido[0]);
             if (t) {
-                await actualizarFilaIngreso(t.filaIngreso, { [campo]: valor });
+                await updateIncomeRow(t.filaIngreso, { [campo]: valor });
                 return;
             }
         }
 
         const t = findTransactionByMessageId(quotedId);
         if (t) {
-            await actualizarFilaIngreso(t.filaIngreso, { [campo]: valor });
+            await updateIncomeRow(t.filaIngreso, { [campo]: valor });
             return;
         }
     }
@@ -355,7 +355,7 @@ async function procesarTextoConReply(ctx: MensajeEntrante): Promise<void> {
         if (!datosCliente) return;
 
         if (datosCliente.vendedor && datosCliente.vendedor !== 'N/A') {
-            await actualizarFilaIngreso(transaccion.filaIngreso, { vendedor: datosCliente.vendedor });
+            await updateIncomeRow(transaccion.filaIngreso, { vendedor: datosCliente.vendedor });
         }
 
         if (!tieneDatosUtilesDeVenta(datosCliente)) return;
