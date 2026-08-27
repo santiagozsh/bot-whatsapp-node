@@ -13,8 +13,8 @@ import { CUENTAS_ABONO, NOMBRES_ABONO, CUENTAS_INGRESO, VENDEDORES_CONOCIDOS } f
  * @returns Formatted date string, or original string if pattern does not match.
  */
 export const formatDate = (originalDate: string): string => {
-    const months = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
-    const parts = originalDate.split('/');
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+  const parts = originalDate.split('/');
 
   if (parts.length === 3) {
     const day = parseInt(parts[0] || '1', 10);
