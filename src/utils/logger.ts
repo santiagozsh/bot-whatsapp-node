@@ -1,18 +1,22 @@
-enum LogLevel {
+export enum LogLevel {
     ERROR = 0,
     WARN = 1,
     INFO = 2,
     DEBUG = 3,
 }
 
-const NIVEL = (() => {
-    const env = process.env.LOG_LEVEL?.toUpperCase();
-    if (env === 'ERROR') return LogLevel.ERROR;
-    if (env === 'WARN') return LogLevel.WARN;
-    if (env === 'INFO') return LogLevel.INFO;
-    if (env === 'DEBUG') return LogLevel.DEBUG;
+export type LogLevelName = 'ERROR' | 'WARN' | 'INFO' | 'DEBUG' | 'error' | 'warn' | 'info' | 'debug';
+
+function parseLogLevel(levelName?: string): LogLevel {
+    const normalized = levelName?.toUpperCase();
+    if (normalized === 'ERROR') return LogLevel.ERROR;
+    if (normalized === 'WARN') return LogLevel.WARN;
+    if (normalized === 'INFO') return LogLevel.INFO;
+    if (normalized === 'DEBUG') return LogLevel.DEBUG;
     return LogLevel.INFO;
-})();
+}
+
+let activeLogLevel: LogLevel = parseLogLevel(process.env.LOG_LEVEL);
 
 let totalPromptTokens = 0;
 let totalCompletionTokens = 0;
@@ -25,30 +29,68 @@ function timestamp(): string {
 
 export const logger = {
     error: (tag: string, msg: string, ...args: unknown[]) => {
-        if (NIVEL >= LogLevel.ERROR) console.error(`❌ [${timestamp()}] [${tag}] ${msg}`, ...args);
+        if (activeLogLevel >= LogLevel.ERROR) {
+            console.error(`❌ [${timestamp()}] [${tag}] ${msg}`, ...args);
+        }
     },
     warn: (tag: string, msg: string, ...args: unknown[]) => {
-        if (NIVEL >= LogLevel.WARN) console.warn(`⚠️ [${timestamp()}] [${tag}] ${msg}`, ...args);
+        if (activeLogLevel >= LogLevel.WARN) {
+            console.warn(`⚠️ [${timestamp()}] [${tag}] ${msg}`, ...args);
+        }
     },
     info: (tag: string, msg: string, ...args: unknown[]) => {
-        if (NIVEL >= LogLevel.INFO) console.log(`[${timestamp()}] [${tag}] ${msg}`, ...args);
+        if (activeLogLevel >= LogLevel.INFO) {
+            console.log(`[${timestamp()}] [${tag}] ${msg}`, ...args);
+        }
     },
     debug: (tag: string, msg: string, ...args: unknown[]) => {
-        if (NIVEL >= LogLevel.DEBUG) console.log(`🔍 [${timestamp()}] [${tag}] ${msg}`, ...args);
+        if (activeLogLevel >= LogLevel.DEBUG) {
+            console.log(`🔍 [${timestamp()}] [${tag}] ${msg}`, ...args);
+        }
     },
     tokenUsage: (promptTokens: number, completionTokens: number) => {
         totalPromptTokens += promptTokens;
         totalCompletionTokens += completionTokens;
         totalLlmCalls++;
-        console.log(`📊 [TOKENS] Esta llamada: ${promptTokens + completionTokens} (prompt: ${promptTokens} | completion: ${completionTokens}) | Total acumulado: ${totalPromptTokens + totalCompletionTokens} en ${totalLlmCalls} llamadas`);
+        if (activeLogLevel >= LogLevel.DEBUG) {
+            console.log(`📊 [${timestamp()}] [TOKENS] Call: ${promptTokens + completionTokens} (prompt: ${promptTokens} | completion: ${completionTokens}) | Cumulative: ${totalPromptTokens + totalCompletionTokens} in ${totalLlmCalls} calls`);
+        }
     },
     summary: () => {
-        console.log(`\n═══════════════════════════════════════`);
-        console.log(`   RESUMEN DE CONSUMO (esta sesión)`);
-        console.log(`   Llamadas a IA:  ${totalLlmCalls}`);
-        console.log(`   Tokens totales: ${totalPromptTokens + totalCompletionTokens}`);
-        console.log(`   Prompt:         ${totalPromptTokens}`);
-        console.log(`   Completion:     ${totalCompletionTokens}`);
-        console.log(`═══════════════════════════════════════\n`);
+        return {
+            totalLlmCalls,
+            totalTokens: totalPromptTokens + totalCompletionTokens,
+            totalPromptTokens,
+            totalCompletionTokens,
+        };
     },
 };
+
+/**
+ * Creates a silent logger object compatible with Baileys to eliminate WebSocket packet spam.
+ */
+export function createSilentBaileysLogger() {
+    const noop = () => {};
+    const silentLogger: any = {
+        level: 'silent',
+        trace: noop,
+        debug: noop,
+        info: noop,
+        warn: noop,
+        error: noop,
+        fatal: noop,
+        child: () => silentLogger,
+    };
+    return silentLogger;
+}
+
+// Backward-compatible alias
+export const createChildLogger = createSilentBaileysLogger;
+
+export function setLogLevel(level: LogLevelName) {
+    activeLogLevel = parseLogLevel(level);
+}
+
+export function getLogLevel(): LogLevel {
+    return activeLogLevel;
+}

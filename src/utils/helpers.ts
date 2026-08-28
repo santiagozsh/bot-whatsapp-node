@@ -250,7 +250,7 @@ export const detectBankByColor = async (imageBase64: string): Promise<string | u
 
     const pct = (count: number) => ((count / totalPixels) * 100);
 
-    logger.info('COLOR', `white=${pct(white).toFixed(1)}% black=${pct(black).toFixed(1)}% yellow=${pct(yellow).toFixed(1)}% pink=${pct(pink).toFixed(1)}% red=${pct(red).toFixed(1)}%`);
+    logger.debug('COLOR', `white=${pct(white).toFixed(1)}% black=${pct(black).toFixed(1)}% yellow=${pct(yellow).toFixed(1)}% pink=${pct(pink).toFixed(1)}% red=${pct(red).toFixed(1)}%`);
 
     if (yellow / totalPixels > 0.02 && black / totalPixels > 0.02) return 'Bancolombia';
     if (pink / totalPixels > 0.04) return 'Nequi';

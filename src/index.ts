@@ -2,17 +2,20 @@ import { initializeWhatsAppClient, whatsappClient, whatsappDestroy, checkBaileys
 import { initDatabase, closeDatabase, getSequenceValue, setSequenceValue } from './services/memory.service';
 import { getLatestOrderNumberFromSheets } from './services/sheets.service';
 import { classifyDailyOrders } from './services/classifier.service';
+import { startMetricsServer, stopMetricsServer } from './services/metrics.service';
 import { logger } from './utils/logger';
 
 /**
  * Main application bootstrap sequence:
- * 1. Initializes local SQLite database (`bot_memory.db`).
- * 2. Synchronizes order sequence counter with Google Sheets to prevent sequence regression.
- * 3. Connects to WhatsApp WebSocket gateway via Baileys v7.
- * 4. Checks npm registry for Baileys version updates.
+ * 1. Starts HTTP metrics & healthcheck server on port 9090.
+ * 2. Initializes local SQLite database (`bot_memory.db`).
+ * 3. Synchronizes order sequence counter with Google Sheets to prevent sequence regression.
+ * 4. Connects to WhatsApp WebSocket gateway via Baileys v7.
+ * 5. Checks npm registry for Baileys version updates.
  */
 async function startServer(): Promise<void> {
     logger.info('INIT', 'Starting server...');
+    await startMetricsServer();
     initDatabase();
 
     try {
@@ -33,9 +36,6 @@ async function startServer(): Promise<void> {
 }
 
 startServer();
-
-// Hourly token usage summary logger
-setInterval(() => logger.summary(), 3600000);
 
 // Calculate milliseconds until midnight for daily wholesale classifier cron
 const msUntilMidnight = (() => {
@@ -71,6 +71,7 @@ const gracefulShutdown = async (signal: string) => {
             await whatsappDestroy();
             logger.info('SHUTDOWN', 'WhatsApp client disconnected cleanly');
         }
+        await stopMetricsServer();
         closeDatabase();
     } catch (err) {
         logger.error('SHUTDOWN', 'Error during graceful shutdown:', err);
@@ -89,6 +90,7 @@ process.on('unhandledRejection', (reason) => {
 process.on('uncaughtException', (error) => {
     logger.error('PROCESS', 'Uncaught exception — exiting:', error);
     closeDatabase();
+    stopMetricsServer().catch(() => {});
     if (whatsappDestroy) {
         whatsappDestroy().catch(() => {});
     }

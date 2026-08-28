@@ -5,6 +5,7 @@ import { buildAccountingPrompt, buildCustomerPrompt } from '../utils/prompts';
 import { parseProductList } from '../utils/luxurygotti.data';
 import { executeWithRetry, classifyIncomeType, extractVendor } from '../utils/helpers';
 import { logger } from '../utils/logger';
+import { recordOpenAiTokens, startOpenAiTimer } from './metrics.service';
 import type { DatosOCRBrutos, DatosIngreso, DatosCliente } from '../types';
 
 dotenv.config();
@@ -29,7 +30,7 @@ export function _setOpenAiClientForTesting(client: any): void {
  */
 export async function optimizeImageForOcr(base64String: string): Promise<string> {
     try {
-        logger.info('SHARP', 'Compressing image for OCR...');
+        logger.debug('SHARP', 'Compressing image for OCR...');
         const originalBuffer = Buffer.from(base64String, 'base64');
 
         const optimizedBuffer = await sharp(originalBuffer)
@@ -90,14 +91,21 @@ export const extractAccountingDataFromOcr = async (
         if (bankByColor) logger.info('AI', `Visual bank hint: ${bankByColor}`);
         logger.info('AI', 'Sending accounting prompt to OpenAI (Prompt A)...');
 
-        const result = await executeWithRetry(() => openai.chat.completions.create({
-            model: openaiModel,
-            messages: [{ role: 'user', content: prompt }],
-            response_format: { type: 'json_object' },
-        }));
+        const stopTimerA = startOpenAiTimer('PromptA');
+        let result;
+        try {
+            result = await executeWithRetry(() => openai.chat.completions.create({
+                model: openaiModel,
+                messages: [{ role: 'user', content: prompt }],
+                response_format: { type: 'json_object' },
+            }));
+        } finally {
+            stopTimerA();
+        }
 
         const usage = result.usage;
         logger.tokenUsage(usage?.prompt_tokens || 0, usage?.completion_tokens || 0);
+        recordOpenAiTokens(usage?.prompt_tokens || 0, usage?.completion_tokens || 0);
 
         const responseJson = result.choices[0]?.message?.content || '{}';
         logger.info('AI', `Response: ${responseJson.substring(0, 200)}...`);
@@ -149,14 +157,21 @@ export const extractCustomerDataFromText = async (textBlock: string): Promise<Da
 
         logger.info('AI', 'Sending customer prompt to OpenAI (Prompt B)...');
 
-        const result = await executeWithRetry(() => openai.chat.completions.create({
-            model: openaiModel,
-            messages: [{ role: 'user', content: prompt }],
-            response_format: { type: 'json_object' },
-        }));
+        const stopTimerB = startOpenAiTimer('PromptB');
+        let result;
+        try {
+            result = await executeWithRetry(() => openai.chat.completions.create({
+                model: openaiModel,
+                messages: [{ role: 'user', content: prompt }],
+                response_format: { type: 'json_object' },
+            }));
+        } finally {
+            stopTimerB();
+        }
 
         const usage = result.usage;
         logger.tokenUsage(usage?.prompt_tokens || 0, usage?.completion_tokens || 0);
+        recordOpenAiTokens(usage?.prompt_tokens || 0, usage?.completion_tokens || 0);
 
         const responseJson = result.choices[0]?.message?.content || '{}';
         const raw = JSON.parse(responseJson);

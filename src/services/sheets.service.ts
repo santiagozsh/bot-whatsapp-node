@@ -5,6 +5,7 @@ import { formatDate, formatAccountNumber, executeWithRetry } from '../utils/help
 import { generateNextOrderNumber, registerSequenceSyncCallback } from './memory.service';
 import { getDepartment } from '../utils/colombia.data';
 import { logger } from '../utils/logger';
+import { recordSheetsOperation } from './metrics.service';
 import type { DatosIngreso, DatosCliente, DatosIngresoParcial } from '../types';
 
 dotenv.config();
@@ -115,10 +116,12 @@ export const appendIncomeRow = async (
             const incomeRowIndex = extractRowNumber(updatedRange);
 
             logger.info('SHEETS', `Income row created: ${newOrderId} (row ${incomeRowIndex})`);
+            recordSheetsOperation('append_income', 'success');
             return { nPedido: newOrderId, filaIngreso: incomeRowIndex };
         });
     } catch (error) {
         logger.error('SHEETS', 'Error appending income row (exhausted retries):', error);
+        recordSheetsOperation('append_income', 'error');
         return null;
     }
 };
@@ -184,10 +187,12 @@ export const appendSalesRow = async (
             const salesRowIndex = extractRowNumber(updatedRange);
 
             logger.info('SHEETS', `Sales row ${salesRowIndex} created for ${orderNumber}`);
+            recordSheetsOperation('append_sales', 'success');
             return salesRowIndex;
         });
     } catch (error) {
         logger.error('SHEETS', 'Error appending sales row (exhausted retries):', error);
+        recordSheetsOperation('append_sales', 'error');
         return -1;
     }
 };
@@ -248,9 +253,11 @@ export const enrichSalesRow = async (
             });
 
             logger.info('SHEETS', `Sales row ${salesRowIndex} enriched successfully`);
+            recordSheetsOperation('enrich_sales', 'success');
         });
     } catch (error) {
         logger.error('SHEETS', 'Error enriching sales row (exhausted retries):', error);
+        recordSheetsOperation('enrich_sales', 'error');
     }
 };
 
@@ -305,9 +312,11 @@ export const updateIncomeRow = async (
             });
 
             logger.info('SHEETS', `Income row ${incomeRowIndex} updated: ${Object.keys(fieldsToUpdate).join(', ')}`);
+            recordSheetsOperation('update_income', 'success');
         });
     } catch (error) {
         logger.error('SHEETS', 'Error updating income row (exhausted retries):', error);
+        recordSheetsOperation('update_income', 'error');
     }
 };
 

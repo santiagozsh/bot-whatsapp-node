@@ -5,8 +5,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { processIncomingMessage } from '../controllers/message.controller';
 import type { IncomingMessage, MediaData } from '../controllers/message.controller';
-import pino from 'pino';
-import { logger } from '../utils/logger';
+import { logger, createSilentBaileysLogger } from '../utils/logger';
+import { setWhatsAppConnectionMetric } from './metrics.service';
 
 export let whatsappClient: Awaited<ReturnType<typeof makeWASocket>> | null = null;
 export let whatsappDestroy: (() => Promise<void>) | null = null;
@@ -250,7 +250,7 @@ export const initializeWhatsAppClient = async (): Promise<void> => {
     const sock = makeWASocket({
         auth: state,
         browser: Browsers.windows('Chrome'),
-        logger: pino({ level: process.env.LOG_BAILEYS === 'info' ? 'info' : 'warn' }),
+        logger: createSilentBaileysLogger(),
     });
 
     const previousSocket = whatsappClient;
@@ -272,16 +272,19 @@ export const initializeWhatsAppClient = async (): Promise<void> => {
     sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
         if (qr) {
             cancelSocketHandshakeTimeout();
+            setWhatsAppConnectionMetric(-1);
             logger.info('QR', 'Scan QR code with your WhatsApp client:');
             qrcode.generate(qr, { small: true });
         }
 
         if (connection === 'connecting') {
+            setWhatsAppConnectionMetric(0);
             logger.info('WHATSAPP', 'Connecting to WhatsApp WebSocket gateway...');
         }
 
         if (connection === 'open') {
             cancelSocketHandshakeTimeout();
+            setWhatsAppConnectionMetric(1);
             reconnectAttemptCount = 0;
             logger.info('WHATSAPP', '✅ Connected and listening for group messages');
             await loadAuthorizedGroups(sock);
@@ -289,24 +292,31 @@ export const initializeWhatsAppClient = async (): Promise<void> => {
 
         if (connection === 'close') {
             const error = lastDisconnect?.error;
+            const statusCode = extractErrorStatusCode(error);
             const sessionRevoked = isLoggedOut(error);
-            logger.info('WHATSAPP', `Connection closed. Reconnect: ${!sessionRevoked}`);
-            logger.error('WHATSAPP', `DIAGNOSTIC: ${describeDisconnectReason(error)}`);
-            if (error instanceof Error && error.stack) {
-                logger.error('WHATSAPP', `DIAGNOSTIC stack: ${error.stack}`);
-            }
-            logger.info('WHATSAPP', `DIAGNOSTIC credentials on disk: ${fs.existsSync(CREDS_FILE_PATH) ? 'YES (session active)' : 'NO (will require QR pairing)'}`);
 
             cancelSocketHandshakeTimeout();
             cleanupSocket(sock);
 
-            if (isManualShutdown) return;
+            if (isManualShutdown) {
+                setWhatsAppConnectionMetric(0);
+                return;
+            }
 
             if (sessionRevoked) {
-                logger.warn('RECONNECT', 'Session revoked — clearing saved credentials to generate new QR pairing');
+                setWhatsAppConnectionMetric(-1);
+                logger.warn('WHATSAPP', 'Session revoked — clearing saved credentials to generate new QR pairing');
                 clearSavedCredentials();
                 reconnectAttemptCount = 0;
+            } else if (statusCode === DisconnectReason.restartRequired) {
+                setWhatsAppConnectionMetric(0);
+                logger.debug('WHATSAPP', 'Restart required by protocol handshake (reconnecting)');
+            } else {
+                setWhatsAppConnectionMetric(0);
+                logger.warn('WHATSAPP', `Connection closed: ${describeDisconnectReason(error)}`);
             }
+
+            logger.debug('WHATSAPP', 'Disconnect details:', error);
 
             scheduleReconnection();
         }

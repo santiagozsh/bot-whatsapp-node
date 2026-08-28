@@ -19,7 +19,7 @@ export const extractTextWithVision = async (
     mode: OcrMode = 'comprobante'
 ): Promise<string> => {
     try {
-        logger.info('OCR', `Extracting text (${mode})...`);
+        logger.debug('OCR', `Extracting text (${mode})...`);
 
         const buffer = Buffer.from(imageBase64, 'base64');
 
@@ -47,7 +47,7 @@ export const extractTextWithVision = async (
             return 'SIN_TEXTO_DETECTADO';
         }
 
-        logger.info('OCR', `Text extracted (${extractedText.length} characters).`);
+        logger.debug('OCR', `Text extracted (${extractedText.length} characters).`);
         logger.debug('OCR', extractedText);
         return extractedText;
 
@@ -65,12 +65,12 @@ let trocrLoadingPromise: Promise<TrOCRPipeline | null> | null = null;
 
 async function loadTrOCR(): Promise<TrOCRPipeline | null> {
     try {
-        logger.info('TrOCR', 'Loading model microsoft/trocr-base-handwritten...');
+        logger.debug('TrOCR', 'Loading model microsoft/trocr-base-handwritten...');
 
         const { pipeline } = await import('@xenova/transformers');
         trocrPipeline = await pipeline('image-to-text', 'Xenova/trocr-base-handwritten') as unknown as TrOCRPipeline;
 
-        logger.info('TrOCR', 'TrOCR model loaded successfully');
+        logger.debug('TrOCR', 'TrOCR model loaded successfully');
         return trocrPipeline;
     } catch (error) {
         logger.error('TrOCR', 'Error loading TrOCR model:', error);
@@ -111,7 +111,7 @@ export const extractTextWithVisionEnhanced = async (
             return tesseractText;
         }
 
-        logger.info('TrOCR', `Tesseract produced short/empty text (${tesseractText.length} chars). Attempting TrOCR...`);
+        logger.debug('TrOCR', `Tesseract produced short/empty text (${tesseractText.length} chars). Attempting TrOCR...`);
 
         const pipeline = await getTrOCR();
         if (!pipeline) {
@@ -124,7 +124,7 @@ export const extractTextWithVisionEnhanced = async (
         const trocrText = (result?.generated_text || '').trim();
 
         if (trocrText && trocrText.length >= MIN_TEXT_LENGTH_THRESHOLD) {
-            logger.info('TrOCR', `Text extracted with TrOCR (${trocrText.length} chars).`);
+            logger.debug('TrOCR', `Text extracted with TrOCR (${trocrText.length} chars).`);
             return trocrText;
         }
 

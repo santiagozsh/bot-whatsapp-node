@@ -4,6 +4,7 @@ import { saveTransaction, updateSalesRowIndex, findTransactionByMessageId, findT
 import { extractTextWithVisionEnhanced } from '../services/vision.service';
 import { formatDate, normalizeOcrText, isUsefulText, detectBankByColor } from '../utils/helpers';
 import { logger } from '../utils/logger';
+import { recordMessageProcessed } from '../services/metrics.service';
 import type { IncomeData, CustomerData } from '../types';
 
 // ── Constants ────────────────────────────────────────────────
@@ -273,6 +274,7 @@ async function recordIncomeReceipt(
 
     scheduleFallbackClosingTimer(ctx.chatId);
 
+    recordMessageProcessed('receipt', 'processed');
     logger.info('IMAGE', `✅ ${nPedido} registered (row ${filaIngreso})`);
 }
 
@@ -294,6 +296,7 @@ async function handleReceipt(
     const extractedData = await extractAccountingDataFromOcr(ocrText, truncatedContext, bankByColor);
 
     if (!extractedData || !extractedData.esComprobanteValido) {
+        recordMessageProcessed('receipt', 'ignored');
         logger.info('IMAGE', 'Image rejected as invalid financial receipt');
         return;
     }
@@ -301,6 +304,7 @@ async function handleReceipt(
     if (extractedData.referenciaDePago && extractedData.referenciaDePago !== 'N/A') {
         const existingTx = findTransactionByPaymentReference(extractedData.referenciaDePago);
         if (existingTx) {
+            recordMessageProcessed('receipt', 'duplicate');
             logger.info('IMAGE', `Duplicate payment reference rejected: ${extractedData.referenciaDePago} = ${existingTx.nPedido}`);
             return;
         }
@@ -327,6 +331,7 @@ async function processImageMessage(media: MediaData, ctx: IncomingMessage): Prom
 
 async function processPlainTextMessage(ctx: IncomingMessage): Promise<void> {
     appendToChatContext(ctx.chatId, ctx.body);
+    recordMessageProcessed('text', 'processed');
     logger.info('TEXT', `-> accumulated in context: "${ctx.body.substring(0, 50)}..."`);
 }
 
@@ -343,6 +348,7 @@ async function processQuotedTextMessage(ctx: IncomingMessage): Promise<void> {
     const activeTransaction = activeTransactionByChatId.get(ctx.chatId);
     if (activeTransaction && activeTransaction.messageId === quotedId) {
         appendToChatContext(ctx.chatId, ctx.body);
+        recordMessageProcessed('reply', 'processed');
         logger.info('REPLY', `Associated with active open transaction ${activeTransaction.orderNumber}`);
 
         const customerData = await extractCustomerDataFromText(ctx.body);

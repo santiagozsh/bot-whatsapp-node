@@ -1,14 +1,19 @@
 services:
   app:
     container_name: node-bot-dev
+    build: .
     image: elsantiagod/bot-app-dev:latest
     restart: unless-stopped
     volumes:
+      - .:/app
+      - /app/node_modules
       - ./auth_info_dev:/app/auth_info_dev
-      - ./bot_memory_dev.db:/app/bot_memory_dev.db
+      - ./bot_memory.db:/app/bot_memory.db
+    ports:
+      - "9090:9090"
     environment:
       AUTH_FOLDER_PATH: /app/auth_info_dev
-      DB_PATH: /app/bot_memory_dev.db
+      DB_PATH: /app/bot_memory.db
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       OPENAI_MODEL: ${OPENAI_MODEL}
       GOOGLE_SHEETS_ID: ${GOOGLE_SHEETS_ID}
