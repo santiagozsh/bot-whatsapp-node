@@ -30,7 +30,7 @@ Extraction-accuracy feature work lives separately under `wayfinder:*` (see issue
 |---|-------|-------------|------------------|
 | 0 | **Containerize & harden** | Image builds reliably; compose with volumes for `auth_info/` + SQLite; healthcheck; runs under pm2 or container as decided | Docker, persistent state, image hygiene |
 | 1 | **CI/CD** | GitHub Actions: typecheck → tests → build → registry → deploy | Pipelines, versioned images, automation |
-| 2 | **Observability** | `/metrics` endpoint, Prometheus/Grafana/Loki (or Grafana Cloud free), dead man's switch alerting | SRE fundamentals, SLOs ("99% of receipts processed < 5 min") |
+| 2 | **Observability** | `/metrics` endpoint, Prometheus/Grafana/Loki (Grafana Cloud free), dead man's switch alerting via Telegram | SRE fundamentals, SLOs, Grafana Alloy, Dead Man's Switch (Issue #27 completed) |
 | 3 | **Cloud + IaC** | Terraform against a budget VPS; modules, remote state, automated backups, documented restore drill | IaC, networking basics, DR |
 | 4 | **Kubernetes** | k3s on the same VPS: Secrets, Ingress + cert-manager, GitOps via Argo CD/Flux | k8s real-world, without managed-k8s cost |
 | 5 | **SRE practices** | Runbooks, written postmortems (e.g., Baileys rc13→rc14 incident), backup-restore drills, image scanning (Trivy), secrets handling (SOPS) | Operational judgment — what most portfolios lack |

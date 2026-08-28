@@ -20,3 +20,24 @@ services:
       SHEETS_VENTAS_NOMBRE: ${SHEETS_VENTAS_NOMBRE}
       GRUPO_AUTORIZADO: ${GRUPO_AUTORIZADO_DEV}
       LOG_LEVEL: ${LOG_LEVEL}
+
+  alloy:
+    container_name: grafana-alloy
+    image: grafana/alloy:latest
+    restart: unless-stopped
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - /etc/alloy/config.alloy
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      GRAFANA_CLOUD_PROMETHEUS_URL: ${GRAFANA_CLOUD_PROMETHEUS_URL}
+      GRAFANA_CLOUD_PROMETHEUS_USER: ${GRAFANA_CLOUD_PROMETHEUS_USER}
+      GRAFANA_CLOUD_LOKI_URL: ${GRAFANA_CLOUD_LOKI_URL}
+      GRAFANA_CLOUD_LOKI_USER: ${GRAFANA_CLOUD_LOKI_USER}
+      GRAFANA_CLOUD_API_KEY: ${GRAFANA_CLOUD_API_KEY}
+    depends_on:
+      - app

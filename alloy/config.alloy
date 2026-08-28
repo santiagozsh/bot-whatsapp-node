@@ -1,0 +1,76 @@
+// ── Grafana Alloy Configuration for WhatsApp Accounting Bot ──
+
+// Scrape metrics from the Node.js application container
+prometheus.scrape "bot_metrics" {
+  targets = [
+    {
+      "__address__" = "app:9090",
+      "job"         = "whatsapp-bot",
+      "environment" = sys.env("ENVIRONMENT"),
+    },
+  ]
+  forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+  scrape_interval = "15s"
+}
+
+// Push metrics to Grafana Cloud Prometheus / Mimir
+prometheus.remote_write "grafana_cloud" {
+  endpoint {
+    url = sys.env("GRAFANA_CLOUD_PROMETHEUS_URL")
+
+    basic_auth {
+      username = sys.env("GRAFANA_CLOUD_PROMETHEUS_USER")
+      password = sys.env("GRAFANA_CLOUD_API_KEY")
+    }
+  }
+}
+
+// Discover Docker containers running on the local host
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+// Filter and label container logs specifically for the bot container
+discovery.relabel "bot_logs" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/?(node-bot-dev|bot-app|app)"
+    action        = "keep"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    target_label  = "container"
+  }
+
+  rule {
+    target_label = "job"
+    replacement  = "whatsapp-bot"
+  }
+
+  rule {
+    target_label = "environment"
+    replacement  = sys.env("ENVIRONMENT")
+  }
+}
+
+// Stream logs from Docker container stdout to Loki
+loki.source.docker "bot_logs" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.bot_logs.output
+  forward_to = [loki.write.grafana_cloud.receiver]
+}
+
+// Push logs to Grafana Cloud Loki
+loki.write "grafana_cloud" {
+  endpoint {
+    url = sys.env("GRAFANA_CLOUD_LOKI_URL")
+
+    basic_auth {
+      username = sys.env("GRAFANA_CLOUD_LOKI_USER")
+      password = sys.env("GRAFANA_CLOUD_API_KEY")
+    }
+  }
+}
