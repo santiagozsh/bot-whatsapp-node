@@ -18,33 +18,8 @@ permissions:
   packages: write
 
 jobs:
-  test:
-    name: CI Test & Typecheck
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install Exact Dependencies
-        run: npm ci
-
-      - name: Run TypeScript Static Typecheck
-        run: npx tsc --noEmit
-
-      - name: Run Unit Tests
-        run: npm test
-
   build-and-push:
-    name: Build & Push to GHCR
-    needs: test
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    name: Build, Test & Push to GHCR
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.meta.outputs.version }}
@@ -73,12 +48,12 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tags=${IMAGE}:${VERSION},${IMAGE}:latest" >> "$GITHUB_OUTPUT"
 
-      - name: Build and Push Production Image
+      - name: Build and Push Production Image (In-engine typecheck & tests)
         uses: docker/build-push-action@v5
         with:
           context: .
           target: runner
-          push: true
+          push: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -87,20 +62,13 @@ jobs:
     name: Deploy to Production Server
     needs: build-and-push
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
 
     steps:
-      - name: Trigger Remote Deployment via SSH
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_KEY }}
-          port: ${{ secrets.SSH_PORT || 22 }}
-          script_stop: true
-          script: |
-            cd ${{ secrets.DEPLOY_PATH }}
-            export IMAGE_TAG="${{ needs.build-and-push.outputs.version }}"
-            docker compose -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.prod.yml up -d --remove-orphans
-            docker compose -f docker-compose.prod.yml ps
+      - name: Pull and Restart Production Container
+        run: |
+          cd ${{ secrets.DEPLOY_PATH || '/home/jose/santiago/bot-whatsapp-node' }}
+          export IMAGE_TAG="${{ needs.build-and-push.outputs.version }}"
+          docker compose -f docker-compose.prod.yml pull
+          docker compose -f docker-compose.prod.yml up -d --remove-orphans
+          docker compose -f docker-compose.prod.yml ps

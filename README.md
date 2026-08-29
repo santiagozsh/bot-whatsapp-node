@@ -101,35 +101,37 @@ The system is built as a single-process event loop running on Node.js/TypeScript
 
 ## 4. CI/CD & Automated Deployment (GitHub Actions + GHCR)
 
-The repository implements an automated, immutable release pipeline:
+The repository implements an automated, immutable release pipeline using GitHub Actions and a Self-Hosted Runner on the production server:
 
 ```
-  [ Push to main ] ──► [ 1. CI Validation: tsc + Vitest ]
+  [ Push to main ] ──► [ 1. In-Engine Verification & Build (GitHub Cloud Runner) ]
+                            - Compiles TypeScript to dist/
+                            - Executes all unit tests (101 tests) in Docker builder
                                     │
                                     ▼
-                       [ 2. Build Multi-stage Image ]
+                       [ 2. Publish to ghcr.io ]
+                            (:<version>, :latest)
                                     │
                                     ▼
-                       [ 3. Publish to ghcr.io ]
-                            (:<version>, :latest, :sha-<commit>)
-                                    │
-                                    ▼
-                       [ 4. SSH Remote Deploy ]
-                            docker compose -f docker-compose.prod.yml pull
-                            docker compose -f docker-compose.prod.yml up -d
+                       [ 3. Agent-Driven Local Deploy (Self-Hosted Runner on Host) ]
+                            IMAGE_TAG=<version> docker compose -f docker-compose.prod.yml pull
+                            docker compose -f docker-compose.prod.yml up -d --remove-orphans
 ```
 
-### Required GitHub Repository Secrets
+### Self-Hosted Runner Setup (One-Time Server Configuration)
 
-Configure the following secrets in **Settings > Secrets and variables > Actions**:
-
-| Secret | Description | Example |
-|---|---|---|
-| `SSH_HOST` | Production server IP address or domain | `192.0.2.1` |
-| `SSH_USER` | SSH user with Docker permissions | `jose` / `ubuntu` |
-| `SSH_KEY` | Private SSH key (matching server `~/.ssh/authorized_keys`) | `-----BEGIN OPENSSH PRIVATE KEY-----...` |
-| `SSH_PORT` | SSH port (optional, defaults to 22) | `22` |
-| `DEPLOY_PATH` | Absolute path to the app directory on the server | `/home/jose/santiago/bot-whatsapp-node` |
+1. In GitHub, navigate to **Settings > Actions > Runners > New self-hosted runner**.
+2. Select **OS: Linux** and **Architecture: x64**.
+3. Follow the copy-paste commands to install and start the runner daemon as a systemd service:
+   ```bash
+   ssh jose@100.70.70.48
+   mkdir -p ~/actions-runner && cd ~/actions-runner
+   curl -o actions-runner-linux-x64-2.322.0.tar.gz -L https://github.com/actions/runner/releases/download/v2.322.0/actions-runner-linux-x64-2.322.0.tar.gz
+   tar xzf ./actions-runner-linux-x64-2.322.0.tar.gz
+   ./config.sh --url https://github.com/santiagozsh/bot-whatsapp-node --token <REGISTRATION_TOKEN>
+   sudo ./svc.sh install
+   sudo ./svc.sh start
+   ```
 
 ### GHCR Permissions Setup
 Ensure GitHub Actions can publish images:
