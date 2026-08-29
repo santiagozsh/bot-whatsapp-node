@@ -64,8 +64,6 @@ google-keys.json
 
 # Others
 .artifacts/
-spa.traineddata
-eng.traineddata
 bot_memory.db
 bot_memory_dev.db
 *_dev.db
