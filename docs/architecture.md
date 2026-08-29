@@ -22,7 +22,7 @@ retail, in Colombia. Orders are identified with a sequential number `LG-XXX`.
 
 All business information lives in one Google Spreadsheet with (at least) two tabs:
 
-### Tab `Ingresos transacciones` (9 columns, A–I)
+### Tab `Ingresos transacciones` (9 columns, A–I, name configurable via `SHEETS_INCOME_TAB_NAME`)
 
 | Col | Field | Source | Example |
 |-----|-------|--------|---------|
@@ -36,7 +36,7 @@ All business information lives in one Google Spreadsheet with (at least) two tab
 | H | Cuenta destino | OpenAI, formatted `XXX XXX XXXX` | `314 352 7475` |
 | I | Vendedor | Local regex over context (default `JHON`) | `KAROL` |
 
-### Tab `Ventas` (10 columns, A–J, name configurable via `SHEETS_VENTAS_NOMBRE`)
+### Tab `Ventas` (10 columns, A–J, name configurable via `SHEETS_SALES_TAB_NAME`)
 
 | Col | Field | Source | Example |
 |-----|-------|--------|---------|
@@ -255,10 +255,9 @@ in Ventas — until a late reply rescues it or the nightly classifier reclassifi
 | `OPENAI_API_KEY` | — | OpenAI key |
 | `OPENAI_MODEL` | `gpt-4o-mini` | Model for Prompts A and B |
 | `GOOGLE_SHEETS_ID` | — | Spreadsheet ID |
-| `SHEETS_VENTAS_NOMBRE` | `Ventas` | Sales tab name |
-| `GRUPO_AUTORIZADO` | `Contabilidad` | Authorized group name(s), comma-separated |
-| `TIEMPO_TTL_CONTEXTO` | `14400000` (4h) | Context item lifetime, ms |
-| `TIEMPO_CIERRE_RESPALDO` | `14400000` (4h) | Max inactivity before closing a transaction, ms |
+| `SHEETS_INCOME_TAB_NAME` | `Ingresos transacciones` | Income tab name |
+| `SHEETS_SALES_TAB_NAME` | `Ventas` | Sales tab name |
+| `AUTHORIZED_GROUPS` | `Contabilidad` | Authorized group name(s), comma-separated |
 | `LOG_LEVEL` | `INFO` | `ERROR`/`WARN`/`INFO`/`DEBUG` |
 | `LOG_BAILEYS` | — | `info` to see internal Baileys logs |
 

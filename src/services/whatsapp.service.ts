@@ -204,7 +204,7 @@ function isLoggedOut(error: unknown): boolean {
 
 async function loadAuthorizedGroups(sock: Awaited<ReturnType<typeof makeWASocket>>): Promise<void> {
     try {
-        const targetGroupNames = (process.env.GRUPO_AUTORIZADO || 'Contabilidad')
+        const targetGroupNames = (process.env.AUTHORIZED_GROUPS || process.env.GRUPO_AUTORIZADO || 'Contabilidad')
             .split(',')
             .map(g => g.trim())
             .filter(Boolean);

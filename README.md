@@ -99,12 +99,68 @@ The system is built as a single-process event loop running on Node.js/TypeScript
 
 ---
 
-## 4. Platform & Operations (SRE Roadmap)
+## 4. CI/CD & Automated Deployment (GitHub Actions + GHCR)
+
+The repository implements an automated, immutable release pipeline:
+
+```
+  [ Push to main ] ──► [ 1. CI Validation: tsc + Vitest ]
+                                    │
+                                    ▼
+                       [ 2. Build Multi-stage Image ]
+                                    │
+                                    ▼
+                       [ 3. Publish to ghcr.io ]
+                            (:<version>, :latest, :sha-<commit>)
+                                    │
+                                    ▼
+                       [ 4. SSH Remote Deploy ]
+                            docker compose -f docker-compose.prod.yml pull
+                            docker compose -f docker-compose.prod.yml up -d
+```
+
+### Required GitHub Repository Secrets
+
+Configure the following secrets in **Settings > Secrets and variables > Actions**:
+
+| Secret | Description | Example |
+|---|---|---|
+| `SSH_HOST` | Production server IP address or domain | `192.0.2.1` |
+| `SSH_USER` | SSH user with Docker permissions | `jose` / `ubuntu` |
+| `SSH_KEY` | Private SSH key (matching server `~/.ssh/authorized_keys`) | `-----BEGIN OPENSSH PRIVATE KEY-----...` |
+| `SSH_PORT` | SSH port (optional, defaults to 22) | `22` |
+| `DEPLOY_PATH` | Absolute path to the app directory on the server | `/home/jose/santiago/bot-whatsapp-node` |
+
+### GHCR Permissions Setup
+Ensure GitHub Actions can publish images:
+1. Navigate to **Settings > Actions > General > Workflow permissions**.
+2. Select **Read and write permissions** and save.
+
+### Single-Session WhatsApp Operational Routine
+WhatsApp Multi-Device allows only **one active WebSocket connection per session folder at a time**:
+1. **Initial server setup:** Copy your authenticated `./auth_info` folder and `./bot_memory.db` to the server once:
+   ```bash
+   scp -r ./auth_info user@server:/home/jose/santiago/bot-whatsapp-node/
+   scp ./bot_memory.db user@server:/home/jose/santiago/bot-whatsapp-node/
+   ```
+2. **Local development:** When running the bot locally, ensure the server container is stopped (`docker compose stop`) to prevent session disconnection.
+3. **Automated deployments:** When merging to `main`, GitHub Actions deploys the container, which automatically reconnects to the existing session without requiring a QR code re-scan.
+
+### Sub-Minute Rollback Runbook
+If an issue occurs in production, revert immediately using the previous version tag:
+```bash
+# On the production server:
+IMAGE_TAG=3.0.0 docker compose -f docker-compose.prod.yml up -d
+```
+
+---
+
+## 5. Platform & Operations (SRE Roadmap)
 
 This repository serves as a live platform engineering showcase. Operational improvements are tracked systematically via GitHub Issues under the `platform:*` workstream:
 
-- **Phase 0 — Containerization & Process Hygiene:** Multi-stage `Dockerfile`, `docker-compose.yml`, non-root container user, volume persistence for `auth_info/` and SQLite databases.
-- **Phase 1 — CI/CD Automation:** GitHub Actions workflows executing typechecking, unit test suites for pure parsers ([Issue #24](https://github.com/santiagozsh/bot-whatsapp-node/issues/24)), and automated deployment scripts ([Issue #25](https://github.com/santiagozsh/bot-whatsapp-node/issues/25)).
+- **Phase 0 — Containerization & Process Hygiene:** Multi-stage `Dockerfile`, `docker-compose.prod.yml`, non-root container user, volume persistence for `auth_info/` and SQLite databases.
+- **Phase 1 — CI/CD Automation:** GitHub Actions workflows executing typechecking, unit test suites for pure parsers ([Issue #24](https://github.com/santiagozsh/bot-whatsapp-node/issues/24)), container publishing to GHCR, and automated SSH deployments ([Issue #25](https://github.com/santiagozsh/bot-whatsapp-node/issues/25)).
 - **Phase 2 — Observability & Alerting:** Automated daily backups with documented restore drills ([Issue #26](https://github.com/santiagozsh/bot-whatsapp-node/issues/26)), dead man's switch heartbeat monitoring ([Issue #27](https://github.com/santiagozsh/bot-whatsapp-node/issues/27)), and PM2/container log rotation ([Issue #28](https://github.com/santiagozsh/bot-whatsapp-node/issues/28)).
 - **Phase 3 — Cloud & Infrastructure as Code:** Terraform-managed deployment on budget cloud VPS with automated snapshot routines.
 - **Phase 4 & 5 — Lightweight Kubernetes & SRE Practices:** K3s deployment with GitOps, structured runbooks, and documented incident postmortems.
@@ -113,17 +169,17 @@ See [docs/roadmap.md](docs/roadmap.md) for full milestone details.
 
 ---
 
-## 5. Technology Stack
+## 6. Technology Stack
 
-- **Runtime & Language:** Node.js 20+ LTS, TypeScript 5.x (`commonjs` target)
+- **Runtime & Language:** Node.js 22 LTS, TypeScript 5.x (`commonjs` target)
 - **WhatsApp Gateway:** `@whiskeysockets/baileys` v7 (WebSocket Multi-Device connection)
 - **AI & Computer Vision:** OpenAI API (`gpt-4o-mini`), `tesseract.js` v7 (OCR), `@xenova/transformers` (TrOCR handwriting fallback), `sharp` (image processing)
 - **State & Database:** `better-sqlite3` (synchronous, WAL-mode SQLite), Google Sheets API v4 via `googleapis`
-- **Infrastructure:** Docker, Docker Compose, PM2 process supervisor
+- **Infrastructure:** Docker (multi-stage Alpine), Docker Compose, GitHub Actions, GHCR
 
 ---
 
-## 6. Repository Layout & Documentation Index
+## 7. Repository Layout & Documentation Index
 
 ```
 .
@@ -165,13 +221,13 @@ Environment configuration is managed through `.env`:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OPENAI_API_KEY` | _required_ | OpenAI API Key for structured extraction |
-| `OPENAI_MODEL` | `gpt-4o-mini` | LLM model used for receipt and customer extraction |
 | `GOOGLE_SHEETS_ID` | _required_ | Target Google Spreadsheet ID |
-| `SHEETS_VENTAS_NOMBRE` | `Ventas` | Name of the sales tab in the spreadsheet |
-| `GRUPO_AUTORIZADO` | `Contabilidad` | Comma-separated list of authorized WhatsApp group names |
-| `TIEMPO_TTL_CONTEXTO` | `14400000` (4h) | Ephemeral chat context item lifetime in milliseconds |
-| `TIEMPO_CIERRE_RESPALDO` | `14400000` (4h) | Fallback transaction timeout before automatic closure |
+| `OPENAI_MODEL` | `gpt-4o-mini` | LLM model used for receipt and customer extraction |
+| `SHEETS_INCOME_TAB_NAME` | `Ingresos transacciones` | Name of the primary income tab in the spreadsheet |
+| `SHEETS_SALES_TAB_NAME` | `Ventas` | Name of the sales tab in the spreadsheet |
+| `AUTHORIZED_GROUPS` | `Contabilidad` | Comma-separated list of authorized WhatsApp group names |
 | `LOG_LEVEL` | `INFO` | Logging verbosity (`DEBUG`, `INFO`, `WARN`, `ERROR`) |
+| `METRICS_PORT` | `9090` | HTTP port for Prometheus `/metrics` and `/health` endpoints |
 
 ---
 

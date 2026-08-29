@@ -10,6 +10,18 @@ import type { DatosIngreso, DatosCliente, DatosIngresoParcial } from '../types';
 
 dotenv.config();
 
+/**
+ * Resolves the configured tab name for the income/transactions sheet.
+ */
+export const getIncomeSheetName = (): string =>
+    process.env.SHEETS_INCOME_TAB_NAME || process.env.SHEETS_INGRESOS_NOMBRE || 'Ingresos transacciones';
+
+/**
+ * Resolves the configured tab name for the sales sheet.
+ */
+export const getSalesSheetName = (): string =>
+    process.env.SHEETS_SALES_TAB_NAME || process.env.SHEETS_VENTAS_NOMBRE || 'Ventas';
+
 const SPREADSHEET_ID = (() => {
     const id = process.env.GOOGLE_SHEETS_ID;
     if (!id && process.env.NODE_ENV !== 'test') {
@@ -104,9 +116,11 @@ export const appendIncomeRow = async (
                 incomeData.vendedor || "JHON",
             ];
 
+            const incomeSheetName = getIncomeSheetName();
+
             const appendResponse = await sheets.spreadsheets.values.append({
                 spreadsheetId: SPREADSHEET_ID,
-                range: 'Ingresos transacciones!A:I',
+                range: `${incomeSheetName}!A:I`,
                 valueInputOption: 'USER_ENTERED',
                 insertDataOption: 'INSERT_ROWS',
                 requestBody: { values: [rowData] },
@@ -158,7 +172,7 @@ export const appendSalesRow = async (
     try {
         return await executeWithRetry(async () => {
             const sheets = await getSheetsClient();
-            const salesSheetName = process.env.SHEETS_VENTAS_NOMBRE || 'Ventas';
+            const salesSheetName = getSalesSheetName();
 
             const department = getDepartment(customerData.municipio || '');
 
@@ -215,7 +229,7 @@ export const enrichSalesRow = async (
     try {
         await executeWithRetry(async () => {
             const sheets = await getSheetsClient();
-            const salesSheetName = process.env.SHEETS_VENTAS_NOMBRE || 'Ventas';
+            const salesSheetName = getSalesSheetName();
 
             const currentRead = await sheets.spreadsheets.values.get({
                 spreadsheetId: SPREADSHEET_ID,
@@ -278,6 +292,7 @@ export const updateIncomeRow = async (
         await executeWithRetry(async () => {
             const sheets = await getSheetsClient();
 
+            const incomeSheetName = getIncomeSheetName();
             const columnMap: Record<string, string> = {
                 tipo:        'C',
                 descripcion: 'D',
@@ -291,7 +306,7 @@ export const updateIncomeRow = async (
                     const col = columnMap[field];
                     if (col) {
                         updateData.push({
-                            range: `Ingresos transacciones!${col}${incomeRowIndex}`,
+                            range: `${incomeSheetName}!${col}${incomeRowIndex}`,
                             values: [[value]],
                         });
                     }
@@ -360,9 +375,11 @@ export const getLatestOrderNumberFromSheets = async (): Promise<number | null> =
         return await executeWithRetry(async () => {
             const sheets = await getSheetsClient();
 
+            const incomeSheetName = getIncomeSheetName();
+
             const response = await sheets.spreadsheets.values.get({
                 spreadsheetId: SPREADSHEET_ID,
-                range: 'Ingresos transacciones!A:A',
+                range: `${incomeSheetName}!A:A`,
             });
 
             const rows = response.data.values || [];
@@ -396,9 +413,11 @@ export const readIncomeRows = async (): Promise<IncomeRow[]> => {
         return await executeWithRetry(async () => {
             const sheets = await getSheetsClient();
 
+            const incomeSheetName = getIncomeSheetName();
+
             const response = await sheets.spreadsheets.values.get({
                 spreadsheetId: SPREADSHEET_ID,
-                range: 'Ingresos transacciones!A:I',
+                range: `${incomeSheetName}!A:I`,
             });
 
             const rows = response.data.values || [];
@@ -435,7 +454,7 @@ export const readSalesRows = async (): Promise<SalesRow[]> => {
     try {
         return await executeWithRetry(async () => {
             const sheets = await getSheetsClient();
-            const salesSheetName = process.env.SHEETS_VENTAS_NOMBRE || 'Ventas';
+            const salesSheetName = getSalesSheetName();
 
             const response = await sheets.spreadsheets.values.get({
                 spreadsheetId: SPREADSHEET_ID,

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
     appendIncomeRow,
     appendSalesRow,
@@ -7,6 +7,8 @@ import {
     getLatestOrderNumberFromSheets,
     readIncomeRows,
     readSalesRows,
+    getIncomeSheetName,
+    getSalesSheetName,
     _setSheetsClientForTesting,
     _resetSheetsClientForTesting,
 } from '../../src/services/sheets.service';
@@ -14,9 +16,11 @@ import type { DatosIngreso, DatosCliente } from '../../src/types';
 
 describe('sheets.service.ts (Google Sheets API Layer)', () => {
     let mockSheetsClient: any;
+    const originalEnv = { ...process.env };
 
     beforeEach(() => {
         _resetSheetsClientForTesting();
+        process.env = { ...originalEnv };
 
         mockSheetsClient = {
             spreadsheets: {
@@ -30,6 +34,10 @@ describe('sheets.service.ts (Google Sheets API Layer)', () => {
         };
 
         _setSheetsClientForTesting(mockSheetsClient);
+    });
+
+    afterEach(() => {
+        process.env = { ...originalEnv };
     });
 
     describe('appendIncomeRow', () => {
@@ -222,6 +230,61 @@ describe('sheets.service.ts (Google Sheets API Layer)', () => {
             expect(rows[0]?.fila).toBe(2);
             expect(rows[0]?.cantidadRelojes).toBe(2);
             expect(rows[0]?.cantidadOtros).toBe(0);
+        });
+    });
+
+    describe('Configurable Sheet Tab Names', () => {
+        it('resolves default tab names when no environment variables are provided', () => {
+            delete process.env.SHEETS_INCOME_TAB_NAME;
+            delete process.env.SHEETS_INGRESOS_NOMBRE;
+            delete process.env.SHEETS_SALES_TAB_NAME;
+            delete process.env.SHEETS_VENTAS_NOMBRE;
+
+            expect(getIncomeSheetName()).toBe('Ingresos transacciones');
+            expect(getSalesSheetName()).toBe('Ventas');
+        });
+
+        it('resolves customized tab names from English environment variables', () => {
+            process.env.SHEETS_INCOME_TAB_NAME = 'Custom Incomes';
+            process.env.SHEETS_SALES_TAB_NAME = 'Custom Sales';
+
+            expect(getIncomeSheetName()).toBe('Custom Incomes');
+            expect(getSalesSheetName()).toBe('Custom Sales');
+        });
+
+        it('falls back to legacy Spanish environment variables if English ones are absent', () => {
+            delete process.env.SHEETS_INCOME_TAB_NAME;
+            delete process.env.SHEETS_SALES_TAB_NAME;
+            process.env.SHEETS_INGRESOS_NOMBRE = 'Legacy Ingresos';
+            process.env.SHEETS_VENTAS_NOMBRE = 'Legacy Ventas';
+
+            expect(getIncomeSheetName()).toBe('Legacy Ingresos');
+            expect(getSalesSheetName()).toBe('Legacy Ventas');
+        });
+
+        it('uses dynamic income tab name in appendIncomeRow', async () => {
+            process.env.SHEETS_INCOME_TAB_NAME = 'Custom Incomes';
+            mockSheetsClient.spreadsheets.values.append.mockResolvedValue({
+                data: { updates: { updatedRange: 'Custom Incomes!A10:I10' } },
+            });
+
+            const incomeData: DatosIngreso = {
+                esComprobanteValido: true,
+                fecha: '05/08/2026',
+                tipo: 'Ingreso',
+                descripcion: 'Pedido al por menor',
+                precioCompra: '165000',
+                medioDePago: 'Nequi',
+                referenciaDePago: 'M999999',
+                cuentaDestino: '3143527475',
+                vendedor: 'Karol',
+            };
+
+            await appendIncomeRow(incomeData);
+
+            expect(mockSheetsClient.spreadsheets.values.append).toHaveBeenCalledTimes(1);
+            const call = mockSheetsClient.spreadsheets.values.append.mock.calls[0][0];
+            expect(call.range).toBe('Custom Incomes!A:I');
         });
     });
 });
