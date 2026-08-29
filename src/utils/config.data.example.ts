@@ -1,5 +1,11 @@
-// Copiar este archivo como config.data.ts y reemplazar con valores reales
-export const CUENTAS_ABONO = ['CAMBIAR_POR_CUENTA_ABONO_1', 'CAMBIAR_POR_CUENTA_ABONO_2'];
-export const NOMBRES_ABONO = ['CAMBIAR_POR_NOMBRE_1'];
-export const CUENTAS_INGRESO = ['CAMBIAR_POR_CUENTA_INGRESO_1'];
-export const VENDEDORES_CONOCIDOS = ['CAMBIAR_POR_VENDEDOR_1'];
+// Copy this file as config.data.ts and replace with real account numbers
+export const INCOME_ACCOUNTS: readonly string[] = ['INCOME_ACCOUNT_1'];
+export const ADVANCE_ACCOUNTS: readonly string[] = ['ADVANCE_ACCOUNT_1', 'ADVANCE_ACCOUNT_2'];
+export const ADVANCE_NAMES: readonly string[] = ['ADVANCE_NAME_1'];
+export const KNOWN_VENDORS: readonly string[] = ['VENDOR_1'];
+
+// Backward-compatible aliases
+export const CUENTAS_INGRESO = INCOME_ACCOUNTS;
+export const CUENTAS_ABONO = ADVANCE_ACCOUNTS;
+export const NOMBRES_ABONO = ADVANCE_NAMES;
+export const VENDEDORES_CONOCIDOS = KNOWN_VENDORS;

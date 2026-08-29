@@ -1,6 +1,6 @@
 import sharp from 'sharp';
 import { logger } from './logger';
-import { CUENTAS_ABONO, NOMBRES_ABONO, CUENTAS_INGRESO, VENDEDORES_CONOCIDOS } from './config.data';
+import { INCOME_ACCOUNTS, ADVANCE_ACCOUNTS, ADVANCE_NAMES, KNOWN_VENDORS } from './config.data';
 
 /**
  * Transforms a date string from "DD/MM/YYYY" format into the business-standard "D-Mes-YYYY" format.
@@ -137,9 +137,9 @@ export const classifyIncomeType = (
   const cleanAccount = destinationAccount.replace(/[\s.\-()]/g, '');
   const lowerOcr = ocrText.toLowerCase();
 
-  if (CUENTAS_INGRESO.some(acc => cleanAccount.includes(acc))) return 'Ingreso';
-  if (CUENTAS_ABONO.some(acc => cleanAccount.includes(acc))) return 'Abono';
-  if (NOMBRES_ABONO.some(name => lowerOcr.includes(name))) return 'Abono';
+  if (INCOME_ACCOUNTS.some((acc: string) => cleanAccount.includes(acc))) return 'Ingreso';
+  if (ADVANCE_ACCOUNTS.some((acc: string) => cleanAccount.includes(acc))) return 'Abono';
+  if (ADVANCE_NAMES.some((name: string) => lowerOcr.includes(name))) return 'Abono';
 
   return 'Ingreso';
 };
@@ -172,7 +172,7 @@ export const extractVendor = (context: string): string => {
 
     if (SPANISH_STOP_WORDS.has(rawName) || rawName.length < 2) return 'JHON';
 
-    const knownVendor = VENDEDORES_CONOCIDOS.find(v => rawName.includes(v));
+    const knownVendor = KNOWN_VENDORS.find((v: string) => rawName.includes(v));
     if (knownVendor) {
       return knownVendor.charAt(0).toUpperCase() + knownVendor.slice(1);
     }

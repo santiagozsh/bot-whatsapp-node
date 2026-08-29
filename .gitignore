@@ -69,7 +69,6 @@ eng.traineddata
 bot_memory.db
 bot_memory_dev.db
 *_dev.db
-src/utils/config.data.ts
 logs-11-07-26
 
 # Internal notes (Spanish, owner-only — see ADR 0002)
