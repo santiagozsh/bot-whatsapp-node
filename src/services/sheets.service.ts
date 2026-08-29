@@ -34,7 +34,7 @@ let sheetsClientPromise: Promise<any> | null = null;
 
 const initGoogleSheetsClient = async () => {
     const auth = new google.auth.GoogleAuth({
-        keyFile: path.join(__dirname, '../../google-keys.json'),
+        keyFile: process.env.GOOGLE_KEYS_PATH || path.join(__dirname, '../../google-keys.json'),
         scopes: ['https://www.googleapis.com/auth/spreadsheets'],
     });
 

@@ -6,6 +6,7 @@ services:
     volumes:
       - ./auth_info:/app/auth_info
       - ./bot_memory.db:/app/bot_memory.db
+      - ./google-keys.json:/app/google-keys.json:ro
     ports:
       - "9090:9090"
     environment:

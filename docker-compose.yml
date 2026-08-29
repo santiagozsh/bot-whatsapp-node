@@ -12,6 +12,7 @@ services:
       - /app/node_modules
       - ./auth_info_dev:/app/auth_info_dev
       - ./bot_memory.db:/app/bot_memory.db
+      - ./google-keys.json:/app/google-keys.json:ro
     ports:
       - "9090:9090"
     environment:
