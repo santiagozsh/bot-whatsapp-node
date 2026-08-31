@@ -1,5 +1,5 @@
 import { makeWASocket, useMultiFileAuthState, DisconnectReason, downloadContentFromMessage, toBuffer, Browsers } from '@whiskeysockets/baileys';
-import type { WAMessage } from '@whiskeysockets/baileys';
+import type { WAMessage, CacheStore } from '@whiskeysockets/baileys';
 import * as qrcode from 'qrcode-terminal';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -15,10 +15,34 @@ const authorizedGroupsCache = new Map<string, string>();
 const AUTH_FOLDER_PATH = process.env.AUTH_FOLDER_PATH || './auth_info';
 const CREDS_FILE_PATH = path.join(AUTH_FOLDER_PATH, 'creds.json');
 
+// ── In-Memory Cache Store for Retries ─────────────────────────
+
+/**
+ * Creates an in-memory CacheStore instance conforming to Baileys CacheStore interface.
+ */
+export function createInMemoryCacheStore(): CacheStore {
+    const store = new Map<string, any>();
+    return {
+        get<T>(key: string): T | undefined {
+            return store.get(key) as T | undefined;
+        },
+        set<T>(key: string, value: T): void {
+            store.set(key, value);
+        },
+        del(key: string): void {
+            store.delete(key);
+        },
+        flushAll(): void {
+            store.clear();
+        },
+    };
+}
+
 // ── Robust Reconnection State ────────────────────────────────
 
 const BASE_RECONNECT_DELAY_MS = 2000;
 const MAX_RECONNECT_DELAY_MS = 32000;
+const FAST_TRACK_RECONNECT_DELAY_MS = 1000;
 const SOCKET_HANDSHAKE_TIMEOUT_MS = 30000;
 
 let reconnectAttemptCount = 0;
@@ -35,9 +59,14 @@ export function _resetReconnectAttemptsForTesting(): void {
 }
 
 /**
- * Calculates exponential backoff reconnect delay (2s -> 4s -> 8s -> 16s -> 32s max).
+ * Calculates reconnect delay with fast-track recovery for transient disconnects
+ * (code 428 connectionClosed, 515 restartRequired) and exponential backoff for others.
  */
-export function calculateReconnectDelay(): number {
+export function calculateReconnectDelay(statusCode?: number | null): number {
+    if (statusCode === DisconnectReason.connectionClosed || statusCode === DisconnectReason.restartRequired) {
+        return FAST_TRACK_RECONNECT_DELAY_MS;
+    }
+
     const delay = Math.min(BASE_RECONNECT_DELAY_MS * (2 ** reconnectAttemptCount), MAX_RECONNECT_DELAY_MS);
     reconnectAttemptCount++;
     return delay;
@@ -99,12 +128,12 @@ export function clearSavedCredentials(): void {
 // Backward-compatible alias
 export const borrarCredenciales = clearSavedCredentials;
 
-function scheduleReconnection(): void {
+function scheduleReconnection(statusCode?: number | null): void {
     if (isReconnectionScheduled) return;
     isReconnectionScheduled = true;
 
-    const delay = calculateReconnectDelay();
-    logger.info('RECONNECT', `Retrying connection in ${(delay / 1000).toFixed(0)}s (attempt ${reconnectAttemptCount})...`);
+    const delay = calculateReconnectDelay(statusCode);
+    logger.info('RECONNECT', `Retrying connection in ${(delay / 1000).toFixed(1)}s (attempt ${reconnectAttemptCount})...`);
 
     reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
@@ -223,10 +252,54 @@ async function loadAuthorizedGroups(sock: Awaited<ReturnType<typeof makeWASocket
 }
 
 /**
- * Extracts raw textual body content from various Baileys message structures.
+ * Resolves the authorized group name for a JID, checking the cache first and falling back
+ * to an on-demand sock.groupMetadata() query to prevent dropped messages during reconnect race conditions.
+ */
+export async function resolveAuthorizedGroupName(
+    sock: Awaited<ReturnType<typeof makeWASocket>>,
+    remoteJid: string
+): Promise<string | null> {
+    if (!remoteJid || !remoteJid.endsWith('@g.us')) return null;
+
+    const cached = authorizedGroupsCache.get(remoteJid);
+    if (cached) return cached;
+
+    const targetGroupNames = (process.env.AUTHORIZED_GROUPS || process.env.GRUPO_AUTORIZADO || 'Contabilidad')
+        .split(',')
+        .map(g => g.trim())
+        .filter(Boolean);
+
+    try {
+        const metadata = await sock.groupMetadata(remoteJid);
+        if (metadata?.subject && targetGroupNames.includes(metadata.subject)) {
+            authorizedGroupsCache.set(remoteJid, metadata.subject);
+            logger.info('CACHE', `Dynamically resolved authorized group: ${metadata.subject} (${remoteJid})`);
+            return metadata.subject;
+        }
+    } catch (error) {
+        logger.debug('CACHE', `Could not resolve group metadata for ${remoteJid}:`, error);
+    }
+
+    return null;
+}
+
+function unwrapMessageContent(msg: WAMessage): any {
+    const raw = msg.message;
+    if (!raw) return null;
+    return (
+        raw.ephemeralMessage?.message ||
+        raw.viewOnceMessage?.message ||
+        raw.viewOnceMessageV2?.message ||
+        raw.documentWithCaptionMessage?.message ||
+        raw
+    );
+}
+
+/**
+ * Extracts raw textual body content from various Baileys message structures (including ephemeral/view-once wrappers).
  */
 export function extractMessageBody(msg: WAMessage): string {
-    const m = msg.message;
+    const m = unwrapMessageContent(msg);
     if (!m) return '';
     if (m.conversation) return m.conversation;
     if (m.extendedTextMessage?.text) return m.extendedTextMessage.text;
@@ -237,7 +310,86 @@ export function extractMessageBody(msg: WAMessage): string {
 export const extraerCuerpo = extractMessageBody;
 
 /**
- * Initializes the Baileys WebSocket client connection with Multi-Device file auth state.
+ * Processes a single incoming WAMessage after resolving group authorization and downloading media.
+ */
+export async function handleIncomingWhatsAppMessage(
+    sock: Awaited<ReturnType<typeof makeWASocket>>,
+    msg: WAMessage
+): Promise<void> {
+    if (!msg || !msg.key) return;
+
+    const remoteJid = msg.key.remoteJid;
+    if (!remoteJid || !remoteJid.endsWith('@g.us')) return;
+
+    const chatName = await resolveAuthorizedGroupName(sock, remoteJid);
+    if (!chatName) return;
+
+    try {
+        logger.info('WHATSAPP', `Message received in authorized group: ${chatName}`);
+
+        const messageId = msg.key.id;
+        if (!messageId) return;
+
+        const content = unwrapMessageContent(msg);
+        const imageMessage = content?.imageMessage;
+        const mimetype = imageMessage?.mimetype;
+        const ci = content?.extendedTextMessage?.contextInfo || imageMessage?.contextInfo;
+
+        let media: MediaData | undefined;
+
+        if (mimetype && !mimetype.includes('webp') && imageMessage) {
+            try {
+                const stream = await downloadContentFromMessage(imageMessage, 'image');
+                const buffer = await toBuffer(stream);
+                media = { data: buffer.toString('base64'), mimetype };
+            } catch (err) {
+                logger.error('DOWNLOAD', 'Error downloading image payload:', err);
+            }
+        }
+
+        const ctx: IncomingMessage = {
+            messageId,
+            chatId: remoteJid,
+            chatName,
+            body: extractMessageBody(msg),
+            hasMedia: !!(
+                imageMessage ||
+                content?.videoMessage ||
+                content?.audioMessage ||
+                content?.stickerMessage
+            ),
+            hasQuotedMsg: !!ci?.stanzaId,
+            ...(mimetype ? { mediaMimetype: mimetype } : {}),
+            ...(ci?.stanzaId ? { quotedMsgId: ci.stanzaId } : {}),
+            ...(ci?.quotedMessage?.conversation ? { quotedBody: ci.quotedMessage.conversation } : {}),
+            ...(ci?.quotedMessage?.extendedTextMessage?.text ? { quotedBody: ci.quotedMessage.extendedTextMessage.text } : {}),
+            ...(media ? { media } : {}),
+        };
+
+        await processIncomingMessage(ctx);
+    } catch (error) {
+        logger.error('WHATSAPP', 'Error processing incoming WhatsApp message:', error);
+    }
+}
+
+/**
+ * Handles batch messages.upsert events, iterating sequentially through ALL messages in the burst
+ * to prevent dropped transactions during post-reconnect catchup.
+ */
+export async function handleMessagesUpsert(
+    sock: Awaited<ReturnType<typeof makeWASocket>>,
+    m: { messages: WAMessage[]; type: string }
+): Promise<void> {
+    if (!m.messages || m.messages.length === 0) return;
+
+    for (const msg of m.messages) {
+        await handleIncomingWhatsAppMessage(sock, msg);
+    }
+}
+
+/**
+ * Initializes the Baileys WebSocket client connection with Multi-Device file auth state
+ * and hardened connection/keep-alive options.
  */
 export const initializeWhatsAppClient = async (): Promise<void> => {
     if (reconnectTimer) {
@@ -246,11 +398,21 @@ export const initializeWhatsAppClient = async (): Promise<void> => {
     }
 
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_FOLDER_PATH);
+    const msgRetryCounterCache = createInMemoryCacheStore();
 
     const sock = makeWASocket({
         auth: state,
         browser: Browsers.windows('Chrome'),
         logger: createSilentBaileysLogger(),
+        keepAliveIntervalMs: 15_000,
+        syncFullHistory: false,
+        markOnlineOnConnect: true,
+        defaultQueryTimeoutMs: 60_000,
+        connectTimeoutMs: 30_000,
+        retryRequestDelayMs: 250,
+        maxMsgRetryCount: 5,
+        msgRetryCounterCache,
+        getMessage: async (_key) => undefined,
     });
 
     const previousSocket = whatsappClient;
@@ -318,66 +480,12 @@ export const initializeWhatsAppClient = async (): Promise<void> => {
 
             logger.debug('WHATSAPP', 'Disconnect details:', error);
 
-            scheduleReconnection();
+            scheduleReconnection(statusCode);
         }
     });
 
     sock.ev.on('messages.upsert', async (m) => {
-        const msg = m.messages[0];
-        if (!msg || !msg.key) return;
-        if (m.type !== 'notify') return;
-
-        const remoteJid = msg.key.remoteJid;
-        if (!remoteJid) return;
-        if (!remoteJid.endsWith('@g.us')) return;
-
-        const chatName = authorizedGroupsCache.get(remoteJid);
-        if (!chatName) return;
-
-        try {
-            logger.info('WHATSAPP', `Message received in authorized group: ${chatName}`);
-
-            const messageId = msg.key.id;
-            if (!messageId) return;
-
-            const mimetype = msg.message?.imageMessage?.mimetype;
-            const ci = msg.message?.extendedTextMessage?.contextInfo;
-
-            let media: MediaData | undefined;
-
-            if (mimetype && !mimetype.includes('webp')) {
-                try {
-                    const stream = await downloadContentFromMessage(msg.message!.imageMessage!, 'image');
-                    const buffer = await toBuffer(stream);
-                    media = { data: buffer.toString('base64'), mimetype };
-                } catch (err) {
-                    logger.error('DOWNLOAD', 'Error downloading image payload:', err);
-                }
-            }
-
-            const ctx: IncomingMessage = {
-                messageId,
-                chatId: remoteJid,
-                chatName,
-                body: extractMessageBody(msg),
-                hasMedia: !!(
-                    msg.message?.imageMessage ||
-                    msg.message?.videoMessage ||
-                    msg.message?.audioMessage ||
-                    msg.message?.stickerMessage
-                ),
-                hasQuotedMsg: !!ci?.stanzaId,
-                ...(mimetype ? { mediaMimetype: mimetype } : {}),
-                ...(ci?.stanzaId ? { quotedMsgId: ci.stanzaId } : {}),
-                ...(ci?.quotedMessage?.conversation ? { quotedBody: ci.quotedMessage.conversation } : {}),
-                ...(ci?.quotedMessage?.extendedTextMessage?.text ? { quotedBody: ci.quotedMessage.extendedTextMessage.text } : {}),
-                ...(media ? { media } : {}),
-            };
-
-            await processIncomingMessage(ctx);
-        } catch (error) {
-            logger.error('WHATSAPP', 'Error processing incoming WhatsApp message:', error);
-        }
+        await handleMessagesUpsert(sock, m);
     });
 };
 
