@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import {
     register,
     createMetricsServer,
@@ -15,7 +16,6 @@ import {
 
 describe('metrics.service.ts (Prometheus Metrics & Health Server)', () => {
     let server: http.Server;
-    const TEST_PORT = 9999;
 
     beforeEach(async () => {
         setWhatsAppConnectionMetric(0);
@@ -23,6 +23,7 @@ describe('metrics.service.ts (Prometheus Metrics & Health Server)', () => {
 
     afterEach(async () => {
         if (server) {
+            server.closeAllConnections?.();
             await new Promise<void>((resolve) => server.close(() => resolve()));
         }
         await stopMetricsServer();
@@ -57,9 +58,10 @@ describe('metrics.service.ts (Prometheus Metrics & Health Server)', () => {
 
     it('responds with Prometheus metrics on GET /metrics', async () => {
         server = createMetricsServer();
-        await new Promise<void>((resolve) => server.listen(TEST_PORT, () => resolve()));
+        await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+        const port = (server.address() as AddressInfo).port;
 
-        const response = await fetch(`http://localhost:${TEST_PORT}/metrics`);
+        const response = await fetch(`http://127.0.0.1:${port}/metrics`);
         expect(response.status).toBe(200);
         expect(response.headers.get('content-type')).toContain('text/plain');
 
@@ -69,17 +71,18 @@ describe('metrics.service.ts (Prometheus Metrics & Health Server)', () => {
 
     it('responds with JSON health status on GET /health', async () => {
         server = createMetricsServer();
-        await new Promise<void>((resolve) => server.listen(TEST_PORT, () => resolve()));
+        await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+        const port = (server.address() as AddressInfo).port;
 
         setWhatsAppConnectionMetric(1);
-        const resOk = await fetch(`http://localhost:${TEST_PORT}/health`);
+        const resOk = await fetch(`http://127.0.0.1:${port}/health`);
         expect(resOk.status).toBe(200);
         const bodyOk = await resOk.json();
         expect(bodyOk.status).toBe('ok');
         expect(bodyOk.whatsappConnectionState).toBe(1);
 
         setWhatsAppConnectionMetric(-1);
-        const resDegraded = await fetch(`http://localhost:${TEST_PORT}/health`);
+        const resDegraded = await fetch(`http://127.0.0.1:${port}/health`);
         expect(resDegraded.status).toBe(503);
         const bodyDegraded = await resDegraded.json();
         expect(bodyDegraded.status).toBe('degraded');
@@ -87,14 +90,15 @@ describe('metrics.service.ts (Prometheus Metrics & Health Server)', () => {
 
     it('returns 404 for unknown routes', async () => {
         server = createMetricsServer();
-        await new Promise<void>((resolve) => server.listen(TEST_PORT, () => resolve()));
+        await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+        const port = (server.address() as AddressInfo).port;
 
-        const res = await fetch(`http://localhost:${TEST_PORT}/unknown`);
+        const res = await fetch(`http://127.0.0.1:${port}/unknown`);
         expect(res.status).toBe(404);
     });
 
     it('manages singleton lifecycle with startMetricsServer and stopMetricsServer', async () => {
-        const started = await startMetricsServer(TEST_PORT + 1);
+        const started = await startMetricsServer(0);
         expect(started).toBeDefined();
 
         await stopMetricsServer();
