@@ -21,6 +21,7 @@ services:
       AUTHORIZED_GROUPS: ${AUTHORIZED_GROUPS}
       LOG_LEVEL: ${LOG_LEVEL}
       METRICS_PORT: ${METRICS_PORT}
+      GROQ_API_KEY: ${GROQ_API_KEY}
 
   alloy:
     container_name: grafana-alloy-prod

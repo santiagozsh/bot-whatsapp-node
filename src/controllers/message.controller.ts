@@ -17,7 +17,10 @@ const FINANCIAL_KEYWORDS = [
     'transferencia', 'comprobante', 'pago', 'valor',
     'total', 'cuenta', 'ahorros', 'corriente',
     'recibido', 'recibí', 'consignacion', 'consignación',
-    'transaccion', 'transacción',
+    'transaccion', 'transacción', 'exitoso', 'enviaste',
+    'origen', 'destino', 'titular', 'referencia',
+    'movimiento', 'pse', 'bbva', 'nu', 'bancamia',
+    'aprobado', 'autorizacion', 'autorización',
 ];
 
 // ── Types ────────────────────────────────────────────────────
@@ -243,8 +246,8 @@ function scheduleFallbackClosingTimer(chatId: string): void {
 // ── Image Processing Pipeline ────────────────────────────────
 
 async function preprocessImage(media: MediaData): Promise<string> {
-    const optimizedBase64 = await optimizeImageForOcr(media.data);
-    return normalizeOcrText(await extractTextWithVisionEnhanced(optimizedBase64));
+    const mimeType = media.mimetype || 'image/jpeg';
+    return normalizeOcrText(await extractTextWithVisionEnhanced(media.data, mimeType));
 }
 
 function handleNonReceiptImage(chatId: string, ocrText: string): void {
@@ -301,7 +304,13 @@ async function handleReceipt(
         return;
     }
 
-    if (extractedData.referenciaDePago && extractedData.referenciaDePago !== 'N/A') {
+    const rawRef = (extractedData.referenciaDePago || '').trim().toLowerCase();
+    const hasValidReference = rawRef
+        && rawRef !== 'n/a'
+        && rawRef !== 'no identificado'
+        && rawRef !== 'no detectado';
+
+    if (hasValidReference) {
         const existingTx = findTransactionByPaymentReference(extractedData.referenciaDePago);
         if (existingTx) {
             recordMessageProcessed('receipt', 'duplicate');
@@ -317,13 +326,14 @@ async function processImageMessage(media: MediaData, ctx: IncomingMessage): Prom
     logger.info('IMAGE', 'Processing incoming image payload...');
 
     const ocrText = await preprocessImage(media);
+    const bankByColor = await detectBankByColor(media.data);
+    const isFinancial = containsFinancialKeywords(ocrText) || Boolean(bankByColor && bankByColor !== 'No detectado');
 
-    if (!containsFinancialKeywords(ocrText)) {
+    if (!isFinancial) {
         handleNonReceiptImage(ctx.chatId, ocrText);
         return;
     }
 
-    const bankByColor = await detectBankByColor(media.data);
     await handleReceipt(ocrText, ctx, bankByColor);
 }
 

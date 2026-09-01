@@ -133,7 +133,7 @@ export function createMetricsServer(): http.Server {
 }
 
 export function startMetricsServer(port?: number): Promise<http.Server> {
-    const targetPort = port || Number(process.env.METRICS_PORT) || 9090;
+    const targetPort = port !== undefined ? port : (Number(process.env.METRICS_PORT) || 9090);
 
     return new Promise((resolve) => {
         if (metricsServer) {

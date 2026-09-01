@@ -207,6 +207,42 @@ describe('message.controller.ts (Core Message Orchestrator)', () => {
 
             expect(appendIncomeSpy).not.toHaveBeenCalled();
         });
+
+        it('does not reject receipts with "No identificado" or "N/A" as duplicates', async () => {
+            vi.spyOn(visionService, 'extractTextWithVisionEnhanced').mockResolvedValue('Comprobante DaviPlata $222.000');
+
+            vi.spyOn(aiService, 'extractAccountingDataFromOcr').mockResolvedValue({
+                esComprobanteValido: true,
+                fecha: '05/08/2026',
+                tipo: 'Ingreso',
+                descripcion: 'Pedido al por menor',
+                precioCompra: '222000',
+                medioDePago: 'DaviPlata',
+                referenciaDePago: 'No identificado',
+                cuentaDestino: '3217115717',
+                vendedor: 'JHON',
+            });
+
+            const duplicateCheckSpy = vi.spyOn(memoryService, 'findTransactionByPaymentReference');
+            const appendIncomeSpy = vi.spyOn(sheetsService, 'appendIncomeRow').mockResolvedValue({
+                nPedido: 'LG-006',
+                filaIngreso: 7,
+            });
+            vi.spyOn(memoryService, 'saveTransaction').mockImplementation(() => {});
+
+            await processIncomingMessage({
+                messageId: 'msg_no_ref_receipt',
+                chatId: CHAT_ID,
+                chatName: CHAT_NAME,
+                body: '',
+                hasMedia: true,
+                hasQuotedMsg: false,
+                media: { data: 'img_no_ref', mimetype: 'image/jpeg' },
+            });
+
+            expect(duplicateCheckSpy).not.toHaveBeenCalled();
+            expect(appendIncomeSpy).toHaveBeenCalledTimes(1);
+        });
     });
 
     describe('Quoted replies & Field corrections', () => {
