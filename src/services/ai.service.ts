@@ -3,7 +3,7 @@ import * as dotenv from 'dotenv';
 import sharp from 'sharp';
 import { buildAccountingPrompt, buildCustomerPrompt } from '../utils/prompts';
 import { parseProductList } from '../utils/luxurygotti.data';
-import { executeWithRetry, classifyIncomeType, extractVendor } from '../utils/helpers';
+import { executeWithRetry, classifyIncomeType, extractVendor, resolvePaymentMethod } from '../utils/helpers';
 import { logger } from '../utils/logger';
 import { recordOpenAiTokens, startOpenAiTimer } from './metrics.service';
 import type { DatosOCRBrutos, DatosIngreso, DatosCliente } from '../types';
@@ -117,10 +117,7 @@ export const extractAccountingDataFromOcr = async (
         const destinationAccount = raw.cuentaDestino || '';
         const incomeType = classifyIncomeType(destinationAccount, ocrText);
         const vendor = extractVendor(textContext);
-
-        const paymentMethod = incomeType === 'Abono'
-            ? 'Nequi bodega'
-            : bankByColor || raw.medioDePago || 'No detectado';
+        const paymentMethod = resolvePaymentMethod(raw.medioDePago, destinationAccount, bankByColor);
 
         return {
             esComprobanteValido: true,

@@ -1,6 +1,6 @@
 import sharp from 'sharp';
 import { logger } from './logger';
-import { INCOME_ACCOUNTS, ADVANCE_ACCOUNTS, ADVANCE_NAMES, KNOWN_VENDORS } from './config.data';
+import { INCOME_ACCOUNTS, ADVANCE_ACCOUNTS, BODEGA_ACCOUNTS, ADVANCE_NAMES, KNOWN_VENDORS } from './config.data';
 
 /**
  * Transforms a date string from "DD/MM/YYYY" format into the business-standard "D-Mes-YYYY" format.
@@ -142,6 +142,51 @@ export const classifyIncomeType = (
   if (ADVANCE_NAMES.some((name: string) => lowerOcr.includes(name))) return 'Abono';
 
   return 'Ingreso';
+};
+
+/**
+ * Normalizes and determines the canonical Colombian payment method.
+ * Priority:
+ * 1. If target account belongs to warehouse accounts (`BODEGA_ACCOUNTS`) -> 'Nequi bodega'
+ * 2. If visual bank color palette was detected -> detected bank
+ * 3. Canonical bank name normalization from raw LLM/OCR extraction (`NU`, `BBVA`, `Bancolombia`, `Davivienda`, `Daviplata`, `Nequi`, `Western Union`, `Efectivo`)
+ * 
+ * @param rawPaymentMethod - Raw string extracted by LLM or OCR.
+ * @param destinationAccount - Target bank account string.
+ * @param bankByColor - Visual hint from color analysis.
+ * @returns Canonical Colombian payment method string.
+ */
+export const resolvePaymentMethod = (
+  rawPaymentMethod?: string,
+  destinationAccount?: string,
+  bankByColor?: string
+): string => {
+  const cleanAccount = (destinationAccount || '').replace(/[\s.\-()]/g, '');
+
+  if (BODEGA_ACCOUNTS.some((acc: string) => cleanAccount.includes(acc))) {
+    return 'Nequi bodega';
+  }
+
+  if (bankByColor && bankByColor !== 'No detectado') {
+    return bankByColor;
+  }
+
+  const raw = (rawPaymentMethod || '').trim().toLowerCase();
+  if (!raw || raw === 'n/a' || raw === 'no identificado' || raw === 'no detectado') {
+    return 'No identificado';
+  }
+
+  if (raw.includes('nequi bodega') || raw.includes('bodega')) return 'Nequi bodega';
+  if (raw.includes('nubank') || raw === 'nu' || raw.startsWith('nu ') || raw.includes('nu c.f.')) return 'NU';
+  if (raw.includes('bbva')) return 'BBVA';
+  if (raw.includes('bancolombia')) return 'Bancolombia';
+  if (raw.includes('daviplata')) return 'Daviplata';
+  if (raw.includes('davivienda')) return 'Davivienda';
+  if (raw.includes('nequi')) return 'Nequi';
+  if (raw.includes('western') || raw.includes('wenstern')) return 'Western Union';
+  if (raw.includes('efectivo')) return 'Efectivo';
+
+  return rawPaymentMethod ? rawPaymentMethod.trim() : 'No identificado';
 };
 
 const VENDOR_PATTERN = /(?:venta|vendedor|vendido por)[:\s]+(\w+)/i;

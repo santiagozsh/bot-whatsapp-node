@@ -7,6 +7,7 @@ import {
     normalizeText,
     normalizeOcrText,
     classifyIncomeType,
+    resolvePaymentMethod,
     extractVendor,
     isUsefulText,
     detectBankByColor,
@@ -109,18 +110,60 @@ describe('helpers.ts', () => {
     describe('classifyIncomeType', () => {
         it('classifies as Ingreso when destination account matches CUENTAS_INGRESO', () => {
             expect(classifyIncomeType('314 352 7475', 'Transferencia exitosa')).toBe('Ingreso');
+            expect(classifyIncomeType('322 444 2154', 'Transferencia exitosa')).toBe('Ingreso');
+            expect(classifyIncomeType('321 711 5717', 'Transferencia exitosa')).toBe('Ingreso');
+            expect(classifyIncomeType('20675640140', 'Transferencia exitosa')).toBe('Ingreso');
+            expect(classifyIncomeType('91210979391', 'Transferencia exitosa')).toBe('Ingreso');
+            expect(classifyIncomeType('51103777724', 'Transferencia exitosa')).toBe('Ingreso');
+            expect(classifyIncomeType('310 830 3127', 'Transferencia exitosa')).toBe('Ingreso');
         });
 
         it('classifies as Abono when destination account matches CUENTAS_ABONO', () => {
             expect(classifyIncomeType('310 613 1751', 'Transferencia exitosa')).toBe('Abono');
+            expect(classifyIncomeType('301 381 8248', 'Transferencia exitosa')).toBe('Abono');
+            expect(classifyIncomeType('317 538 5982', 'Transferencia exitosa')).toBe('Abono');
+            expect(classifyIncomeType('037-590539-96', 'Transferencia exitosa')).toBe('Abono');
         });
 
         it('classifies as Abono if receipt text mentions a known advance account holder', () => {
             expect(classifyIncomeType('0000000000', 'Transferencia enviada a Yenci Perez')).toBe('Abono');
+            expect(classifyIncomeType('0000000000', 'Abono realizado a Ramirez')).toBe('Abono');
         });
 
         it('defaults to Ingreso when no special criteria match', () => {
             expect(classifyIncomeType('9999999999', 'Transferencia recibida')).toBe('Ingreso');
+        });
+    });
+
+    describe('resolvePaymentMethod', () => {
+        it('resolves to Nequi bodega when destination account is in BODEGA_ACCOUNTS', () => {
+            expect(resolvePaymentMethod('Nequi', '310 613 1751')).toBe('Nequi bodega');
+            expect(resolvePaymentMethod('Bancolombia', '301 381 8248')).toBe('Nequi bodega');
+            expect(resolvePaymentMethod('No identificado', '317 538 5982')).toBe('Nequi bodega');
+        });
+
+        it('resolves visual bank color when available and not a bodega account', () => {
+            expect(resolvePaymentMethod('No identificado', '322 444 2154', 'Bancolombia')).toBe('Bancolombia');
+            expect(resolvePaymentMethod('Nequi', '322 444 2154', 'Davivienda')).toBe('Davivienda');
+        });
+
+        it('normalizes Colombian bank entities accurately', () => {
+            expect(resolvePaymentMethod('Nu', '322 444 2154')).toBe('NU');
+            expect(resolvePaymentMethod('NuBank', '322 444 2154')).toBe('NU');
+            expect(resolvePaymentMethod('Nu C.F.', '322 444 2154')).toBe('NU');
+            expect(resolvePaymentMethod('bbva', '322 444 2154')).toBe('BBVA');
+            expect(resolvePaymentMethod('bancolombia', '322 444 2154')).toBe('Bancolombia');
+            expect(resolvePaymentMethod('daviplata', '322 444 2154')).toBe('Daviplata');
+            expect(resolvePaymentMethod('davivienda', '322 444 2154')).toBe('Davivienda');
+            expect(resolvePaymentMethod('nequi', '322 444 2154')).toBe('Nequi');
+            expect(resolvePaymentMethod('wenstern union', '322 444 2154')).toBe('Western Union');
+            expect(resolvePaymentMethod('efectivo', '322 444 2154')).toBe('Efectivo');
+        });
+
+        it('handles unknown or empty inputs gracefully', () => {
+            expect(resolvePaymentMethod('', '9999999999')).toBe('No identificado');
+            expect(resolvePaymentMethod('N/A', '9999999999')).toBe('No identificado');
+            expect(resolvePaymentMethod(undefined, '9999999999')).toBe('No identificado');
         });
     });
 
