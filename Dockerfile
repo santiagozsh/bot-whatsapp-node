@@ -9,7 +9,7 @@ RUN apk add --no-cache python3 make g++
 COPY package*.json tsconfig.json ./
 RUN npm install
 
-# Copy source and traineddata
+# Copy source code
 COPY . .
 
 CMD [ "npm", "run", "dev" ]
@@ -41,7 +41,6 @@ COPY package*.json ./
 RUN npm ci --omit=dev && apk del python3 make g++
 
 COPY --from=builder /app/dist ./dist
-COPY spa.traineddata eng.traineddata ./
 
 RUN mkdir -p /app/auth_info && chown -R node:node /app
 

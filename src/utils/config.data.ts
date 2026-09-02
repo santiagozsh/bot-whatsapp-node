@@ -5,6 +5,11 @@ export const INCOME_ACCOUNTS: readonly string[] = [
     '3143527475',
     '3224442154',
     '3212267474',
+    '3217115717',
+    '20675640140',
+    '91210979391',
+    '51103777724',
+    '3108303127',
 ];
 
 /**
@@ -12,8 +17,19 @@ export const INCOME_ACCOUNTS: readonly string[] = [
  */
 export const ADVANCE_ACCOUNTS: readonly string[] = [
     '3106131751',
+    '3013818248',
+    '3175385982',
     '3103455869',
     '03759053996',
+];
+
+/**
+ * Accounts specifically designated for warehouse/supplier restocking (Nequi bodega).
+ */
+export const BODEGA_ACCOUNTS: readonly string[] = [
+    '3106131751',
+    '3013818248',
+    '3175385982',
 ];
 
 /**
@@ -40,5 +56,6 @@ export const KNOWN_VENDORS: readonly string[] = [
 // ── Backward-Compatible Aliases ───────────────────────────────
 export const CUENTAS_INGRESO = INCOME_ACCOUNTS;
 export const CUENTAS_ABONO = ADVANCE_ACCOUNTS;
+export const CUENTAS_BODEGA = BODEGA_ACCOUNTS;
 export const NOMBRES_ABONO = ADVANCE_NAMES;
 export const VENDEDORES_CONOCIDOS = KNOWN_VENDORS;

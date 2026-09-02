@@ -9,6 +9,7 @@ describe('prompts.ts — LLM Prompt Builders', () => {
             expect(prompt).toContain('Accounting Analyst');
             expect(prompt).toContain('Comprobante Nequi $165.000 M123456');
             expect(prompt).toContain('venta Karol');
+            expect(prompt).toContain('Nu, BBVA');
             expect(prompt).toContain('JSON: {"esComprobanteValido":true');
         });
 

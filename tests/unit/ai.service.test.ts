@@ -87,6 +87,69 @@ describe('ai.service.ts (AI & Vision Processing)', () => {
             expect(result?.medioDePago).toBe('Nequi');
         });
 
+        it('resolves Nequi bodega and Abono when receipt goes to warehouse account', async () => {
+            mockOpenAi.chat.completions.create.mockResolvedValue({
+                choices: [
+                    {
+                        message: {
+                            content: JSON.stringify({
+                                esComprobanteValido: true,
+                                fecha: '01/08/2026',
+                                descripcion: 'Pedido al por menor',
+                                precioCompra: '286000',
+                                medioDePago: 'Nequi',
+                                referenciaDePago: 'M04727022',
+                                cuentaDestino: '3106131751',
+                            }),
+                        },
+                    },
+                ],
+                usage: { prompt_tokens: 150, completion_tokens: 40 },
+            });
+
+            const result = await extractAccountingDataFromOcr(
+                'Nequi comprobante $286.000 a 3106131751',
+                '',
+                undefined
+            );
+
+            expect(result).toBeDefined();
+            expect(result?.tipo).toBe('Abono');
+            expect(result?.medioDePago).toBe('Nequi bodega');
+            expect(result?.cuentaDestino).toBe('3106131751');
+        });
+
+        it('normalizes NU bank when NuBank transfer receipt is received', async () => {
+            mockOpenAi.chat.completions.create.mockResolvedValue({
+                choices: [
+                    {
+                        message: {
+                            content: JSON.stringify({
+                                esComprobanteValido: true,
+                                fecha: '05/08/2026',
+                                descripcion: 'Pedido al por menor',
+                                precioCompra: '120000',
+                                medioDePago: 'NuBank',
+                                referenciaDePago: 'NU-9921',
+                                cuentaDestino: '3224442154',
+                            }),
+                        },
+                    },
+                ],
+                usage: { prompt_tokens: 150, completion_tokens: 40 },
+            });
+
+            const result = await extractAccountingDataFromOcr(
+                'Comprobante de transferencia Nu',
+                '',
+                undefined
+            );
+
+            expect(result).toBeDefined();
+            expect(result?.tipo).toBe('Ingreso');
+            expect(result?.medioDePago).toBe('NU');
+        });
+
         it('returns undefined when receipt is invalid or unreadable', async () => {
             mockOpenAi.chat.completions.create.mockResolvedValue({
                 choices: [

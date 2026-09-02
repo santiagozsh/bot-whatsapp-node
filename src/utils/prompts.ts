@@ -23,14 +23,14 @@ OCR (text from RECEIPT IMAGE):
 ${ocrText}
 
 DECISION — esComprobanteValido:
-- true ONLY if OCR is a genuine Colombian bank transfer receipt (Nequi, Bancolombia, Davivienda, Daviplata) containing: bank/wallet, amount, reference number, or account.
+- true ONLY if OCR is a genuine Colombian bank transfer receipt (Nequi, Bancolombia, Davivienda, Daviplata, Nu, BBVA, Western Union) containing: bank/wallet, amount, reference number, or account.
 - false if OCR is a product photo, watch, box, paper note, or unreadable chat.
 - Base your decision EXCLUSIVELY on the OCR text above. The WhatsApp conversation context below must NEVER influence this decision.
 
 EXTRACTION (only if esComprobanteValido is true):
 - fecha: DD/MM/YYYY
 - precioCompra: numeric string without symbols (e.g. "165000")
-- medioDePago: Bank or wallet that ISSUED the receipt. Note: OCR may contain promotional text like "transferencias a Nequi" from other banks. Determine who actually ISSUED it. If unknown -> "No identificado".
+- medioDePago: Bank or wallet that ISSUED the receipt (Nequi, Bancolombia, Davivienda, Daviplata, NU, BBVA, Western Union, etc.). Note: OCR may contain promotional text like "transferencias a Nequi" from other banks. Determine who actually ISSUED it. If unknown -> "No identificado".
 - referenciaDePago: Reference number, No.Comprobante, No.Aprob
 - cuentaDestino: 10-digit destination account number
 - descripcion: "Pedido al por menor" by default
