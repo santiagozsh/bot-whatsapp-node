@@ -1,45 +1,51 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
     extractTextWithVision,
     extractTextWithVisionEnhanced,
-    _setTesseractWorkerForTesting,
+    extraerTextoConVision,
+    extraerTextoConVisionMejorado,
 } from '../../src/services/vision.service';
 import * as groqService from '../../src/services/groq.service';
 
-describe('vision.service.ts (AI Vision Cascade: Groq -> Tesseract)', () => {
+describe('vision.service.ts (Multimodal AI Vision Service)', () => {
     beforeEach(() => {
         vi.restoreAllMocks();
     });
 
-    afterEach(async () => {
-        _setTesseractWorkerForTesting(null);
-    });
-
     describe('extractTextWithVisionEnhanced', () => {
-        it('uses Groq Vision as primary and returns its output without falling back to Tesseract', async () => {
+        it('extracts and returns text using Groq Vision successfully', async () => {
             vi.spyOn(groqService, 'extractTextWithGroqVision').mockResolvedValue(
-                'Nequi $670.000 Ref: M07838801'
+                'Nequi $670.000 Ref: M07838801 Para: Jhon Aguirre'
             );
 
-            const result = await extractTextWithVisionEnhanced('dummy_base64');
+            const result = await extractTextWithVisionEnhanced('dummy_base64', 'image/jpeg');
 
-            expect(result).toBe('Nequi $670.000 Ref: M07838801');
+            expect(result).toBe('Nequi $670.000 Ref: M07838801 Para: Jhon Aguirre');
+            expect(groqService.extractTextWithGroqVision).toHaveBeenCalledWith('dummy_base64', 'image/jpeg');
         });
 
-        it('falls back to local Tesseract when Groq Vision returns empty string', async () => {
-            vi.spyOn(groqService, 'extractTextWithGroqVision').mockResolvedValue('');
+        it('returns empty string when Groq Vision yields empty or short text', async () => {
+            vi.spyOn(groqService, 'extractTextWithGroqVision').mockResolvedValue('abc');
 
-            const mockWorker = {
-                recognize: vi.fn().mockResolvedValue({
-                    data: { text: 'Tesseract Fallback: Bancolombia $320.000' },
-                }),
-            };
-            _setTesseractWorkerForTesting(mockWorker);
+            const result = await extractTextWithVisionEnhanced('dummy_base64');
+            expect(result).toBe('');
+        });
 
-            const dummyBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNiAAAABgADNjd8qAAAAABJRU5ErkJggg==';
-            const result = await extractTextWithVisionEnhanced(dummyBase64);
+        it('handles exceptions gracefully and returns empty string', async () => {
+            vi.spyOn(groqService, 'extractTextWithGroqVision').mockRejectedValue(new Error('Network failure'));
 
-            expect(result).toBe('Tesseract Fallback: Bancolombia $320.000');
+            const result = await extractTextWithVisionEnhanced('dummy_base64');
+            expect(result).toBe('');
+        });
+
+        it('maintains backward-compatible aliases for legacy callers', async () => {
+            vi.spyOn(groqService, 'extractTextWithGroqVision').mockResolvedValue(
+                'Comprobante Bancolombia $320.000'
+            );
+
+            expect(await extractTextWithVision('dummy_base64')).toBe('Comprobante Bancolombia $320.000');
+            expect(await extraerTextoConVision('dummy_base64')).toBe('Comprobante Bancolombia $320.000');
+            expect(await extraerTextoConVisionMejorado('dummy_base64')).toBe('Comprobante Bancolombia $320.000');
         });
     });
 });
