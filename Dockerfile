@@ -2,17 +2,20 @@ FROM node:22-alpine AS dev
 
 WORKDIR /app
 
-# Install build dependencies for native modules (better-sqlite3, sharp)
-RUN apk add --no-cache python3 make g++
+# Install runtime and temporary build dependencies for native modules (better-sqlite3, sharp)
+RUN apk add --no-cache libstdc++ && \
+    apk add --no-cache --virtual .build-deps python3 make g++
 
-# Optimize layer caching: install dependencies first
-COPY package*.json tsconfig.json ./
-RUN npm install
+# Optimize layer caching: install dependencies and purge temporary build dependencies and npm cache
+COPY package*.json tsconfig.json vitest.config.* ./
+RUN npm install && \
+    npm cache clean --force && \
+    apk del .build-deps
 
 # Copy source code
 COPY . .
 
-CMD [ "npm", "run", "dev" ]
+CMD [ "npm", "run", "dev:watch" ]
 
 # ── Stage 1: Build, Test & Compile TypeScript ─────────────────
 FROM node:22-alpine AS builder
