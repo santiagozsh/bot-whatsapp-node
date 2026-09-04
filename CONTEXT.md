@@ -18,6 +18,14 @@ _Avoid_: Revenue, earning, deposit
 An installment, down payment, or reservation transfer made to designated advance accounts.
 _Avoid_: Down payment, credit, partial refund
 
+**Cash-on-Delivery Collection (`Recaudo Contraentrega` / `PAGOS CONTRAENTREGA`)**:
+A plain-text cash inflow reported by sellers or delivery couriers reflecting collected cash from deliveries. Recorded as a standalone financial movement in `Ingresos transacciones` (`Tipo: Ingreso`, `Descripción: PAGOS CONTRAENTREGA`, `Medio de Pago: Efectivo`), without opening a chat context window or creating a row in `Ventas`.
+_Avoid_: Cash sale, delivery invoice, physical receipt
+
+**Cash-on-Delivery Clarification (`Aclaración Contraentrega`)**:
+A textual indicator (via reply or active order context) specifying that an existing open or quoted order was dispatched under cash-on-delivery terms, updating its description in `Ingresos transacciones` to `PAGOS CONTRAENTREGA`.
+_Avoid_: Order update, payment change
+
 **Order Identifier (`N.Pedido` / `LG-XXX`)**:
 The canonical sequential identifier (e.g., `LG-001`) assigned to each financial transaction, creating a strict 1-to-1 link between an Income record and a Sales record.
 _Avoid_: Tracking number, invoice ID, reference code

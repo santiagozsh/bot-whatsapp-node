@@ -2,7 +2,7 @@ import { extractAccountingDataFromOcr, extractCustomerDataFromText, optimizeImag
 import { appendIncomeRow, appendSalesRow, enrichSalesRow, updateIncomeRow } from '../services/sheets.service';
 import { saveTransaction, updateSalesRowIndex, findTransactionByMessageId, findTransactionByPaymentReference, findTransactionByOrderNumber } from '../services/memory.service';
 import { extractTextWithVisionEnhanced } from '../services/vision.service';
-import { formatDate, normalizeOcrText, isUsefulText, detectBankByColor } from '../utils/helpers';
+import { formatDate, normalizeOcrText, isUsefulText, detectBankByColor, parseCodCollectionMessage, isCodClarification, type CodCollectionData } from '../utils/helpers';
 import { logger } from '../utils/logger';
 import { recordMessageProcessed } from '../services/metrics.service';
 import type { IncomeData, CustomerData } from '../types';
@@ -201,8 +201,15 @@ async function closePreviousTransaction(chatId: string): Promise<void> {
     }
 
     const txRecord = findTransactionByMessageId(transaction.messageId);
-    if (customerData.vendedor && customerData.vendedor !== 'N/A' && txRecord) {
-        await updateIncomeRow(txRecord.filaIngreso, { vendedor: customerData.vendedor });
+    if (txRecord) {
+        if (customerData.vendedor && customerData.vendedor !== 'N/A') {
+            await updateIncomeRow(txRecord.filaIngreso, { vendedor: customerData.vendedor });
+        }
+        const hasCodClarification = contextText.split('\n').some(line => isCodClarification(line));
+        if (hasCodClarification) {
+            await updateIncomeRow(txRecord.filaIngreso, { descripcion: 'PAGOS CONTRAENTREGA' });
+            logger.info('COD', `Closed transaction ${transaction.orderNumber} updated to PAGOS CONTRAENTREGA from context`);
+        }
     }
 
     if (!hasUsefulSalesData(customerData)) {
@@ -337,9 +344,62 @@ async function processImageMessage(media: MediaData, ctx: IncomingMessage): Prom
     await handleReceipt(ocrText, ctx, bankByColor);
 }
 
+// ── Cash-on-Delivery (COD) Handlers ──────────────────────────
+
+async function handleCodCollectionMessage(
+    ctx: IncomingMessage,
+    codData: CodCollectionData
+): Promise<void> {
+    const existingTx = findTransactionByMessageId(ctx.messageId);
+    if (existingTx) {
+        logger.info('COD', `Duplicate COD collection message discarded: ${ctx.messageId} (${existingTx.nPedido})`);
+        recordMessageProcessed('text', 'duplicate');
+        return;
+    }
+
+    const incomeData: IncomeData = {
+        esComprobanteValido: true,
+        fecha: getTodayFormattedString(),
+        tipo: 'Ingreso',
+        descripcion: 'PAGOS CONTRAENTREGA',
+        precioCompra: codData.amount,
+        medioDePago: codData.medioDePago,
+        referenciaDePago: 'N/A',
+        cuentaDestino: 'N/A',
+        vendedor: codData.vendedor,
+    };
+
+    const result = await appendIncomeRow(incomeData);
+    if (!result) {
+        logger.error('COD', `Failed to append COD income row for message ${ctx.messageId}`);
+        recordMessageProcessed('text', 'error');
+        return;
+    }
+
+    const { nPedido, filaIngreso } = result;
+
+    saveTransaction(ctx.messageId, nPedido, filaIngreso, 'N/A');
+
+    recordMessageProcessed('text', 'processed');
+    logger.info('COD', `✅ COD Inflow ${nPedido} registered (row ${filaIngreso}) for $${codData.amount} (${codData.medioDePago})`);
+}
+
 // ── Plain Text Processing ────────────────────────────────────
 
 async function processPlainTextMessage(ctx: IncomingMessage): Promise<void> {
+    if (isCodClarification(ctx.body)) {
+        const activeTx = activeTransactionByChatId.get(ctx.chatId);
+        if (activeTx) {
+            const txRecord = findTransactionByMessageId(activeTx.messageId);
+            if (txRecord) {
+                await updateIncomeRow(txRecord.filaIngreso, { descripcion: 'PAGOS CONTRAENTREGA' });
+                logger.info('COD', `Active transaction ${activeTx.orderNumber} updated to PAGOS CONTRAENTREGA via clarification`);
+                recordMessageProcessed('text', 'processed');
+                return;
+            }
+        }
+    }
+
     appendToChatContext(ctx.chatId, ctx.body);
     recordMessageProcessed('text', 'processed');
     logger.info('TEXT', `-> accumulated in context: "${ctx.body.substring(0, 50)}..."`);
@@ -353,6 +413,39 @@ async function processQuotedTextMessage(ctx: IncomingMessage): Promise<void> {
         logger.warn('REPLY', 'Missing quotedMsgId -> appending to context');
         appendToChatContext(ctx.chatId, ctx.body);
         return;
+    }
+
+    if (isCodClarification(ctx.body)) {
+        const quotedText = ctx.quotedBody || '';
+        const orderIdMatch = quotedText.match(/LG-\d+/);
+        if (orderIdMatch && orderIdMatch[0]) {
+            const txByOrder = findTransactionByOrderNumber(orderIdMatch[0]);
+            if (txByOrder) {
+                await updateIncomeRow(txByOrder.filaIngreso, { descripcion: 'PAGOS CONTRAENTREGA' });
+                recordMessageProcessed('reply', 'processed');
+                logger.info('COD', `Quoted order ${txByOrder.nPedido} updated to PAGOS CONTRAENTREGA via reply`);
+                return;
+            }
+        }
+
+        const txByMsgId = findTransactionByMessageId(quotedId);
+        if (txByMsgId) {
+            await updateIncomeRow(txByMsgId.filaIngreso, { descripcion: 'PAGOS CONTRAENTREGA' });
+            recordMessageProcessed('reply', 'processed');
+            logger.info('COD', `Quoted transaction ${txByMsgId.nPedido} updated to PAGOS CONTRAENTREGA via reply`);
+            return;
+        }
+
+        const activeTx = activeTransactionByChatId.get(ctx.chatId);
+        if (activeTx) {
+            const txRecord = findTransactionByMessageId(activeTx.messageId);
+            if (txRecord) {
+                await updateIncomeRow(txRecord.filaIngreso, { descripcion: 'PAGOS CONTRAENTREGA' });
+                recordMessageProcessed('reply', 'processed');
+                logger.info('COD', `Active transaction ${activeTx.orderNumber} updated to PAGOS CONTRAENTREGA via reply`);
+                return;
+            }
+        }
     }
 
     const activeTransaction = activeTransactionByChatId.get(ctx.chatId);
@@ -452,6 +545,12 @@ export const processIncomingMessage = async (ctx: IncomingMessage) => {
         }
 
         if (ctx.body) {
+            const codData = parseCodCollectionMessage(ctx.body);
+            if (codData) {
+                await handleCodCollectionMessage(ctx, codData);
+                return;
+            }
+
             if (ctx.hasQuotedMsg) {
                 await processQuotedTextMessage(ctx);
             } else {
