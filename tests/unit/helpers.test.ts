@@ -11,6 +11,8 @@ import {
     extractVendor,
     isUsefulText,
     detectBankByColor,
+    parseCodCollectionMessage,
+    isCodClarification,
 } from '../../src/utils/helpers';
 
 describe('helpers.ts', () => {
@@ -253,6 +255,118 @@ describe('helpers.ts', () => {
 
             const result = await detectBankByColor(img.toString('base64'));
             expect(result).toBeUndefined();
+        });
+    });
+
+    describe('parseCodCollectionMessage', () => {
+        it('parses COD message with amount at the beginning', () => {
+            const result = parseCodCollectionMessage('242.000 en efectivo de contras de ayer');
+            expect(result).toEqual({
+                amount: '242000',
+                medioDePago: 'Efectivo',
+                vendedor: 'JHON',
+            });
+        });
+
+        it('parses COD message with amount in the middle', () => {
+            const result = parseCodCollectionMessage('Recibí 80.000 de pago en contraentrega');
+            expect(result).toEqual({
+                amount: '80000',
+                medioDePago: 'Efectivo',
+                vendedor: 'JHON',
+            });
+        });
+
+        it('parses COD message with amount at the end', () => {
+            const result = parseCodCollectionMessage('De contraentregas me entregaron 150.000');
+            expect(result).toEqual({
+                amount: '150000',
+                medioDePago: 'Efectivo',
+                vendedor: 'JHON',
+            });
+        });
+
+        it('parses formatted amounts with dollar signs and apostrophes', () => {
+            const result = parseCodCollectionMessage("Recibí $1'500.000 de contraentrega");
+            expect(result).toEqual({
+                amount: '1500000',
+                medioDePago: 'Efectivo',
+                vendedor: 'JHON',
+            });
+        });
+
+        it('parses plain unformatted digit amounts', () => {
+            const result = parseCodCollectionMessage('recibo 95000 contra entrega');
+            expect(result).toEqual({
+                amount: '95000',
+                medioDePago: 'Efectivo',
+                vendedor: 'JHON',
+            });
+        });
+
+        it('detects explicit payment channel if mentioned', () => {
+            const result = parseCodCollectionMessage('Recibí 120.000 de contraentrega por Nequi');
+            expect(result).toEqual({
+                amount: '120000',
+                medioDePago: 'Nequi',
+                vendedor: 'JHON',
+            });
+        });
+
+        it('extracts known vendor if specified in the text', () => {
+            const result = parseCodCollectionMessage('Recibí 80.000 contras venta Karol');
+            expect(result).toEqual({
+                amount: '80000',
+                medioDePago: 'Efectivo',
+                vendedor: 'Karol',
+            });
+        });
+
+        it('disambiguates amount from Colombian 10-digit phone numbers starting with 3', () => {
+            const result = parseCodCollectionMessage('Recibí 85.000 de contraentrega del cliente 3143527475');
+            expect(result).toEqual({
+                amount: '85000',
+                medioDePago: 'Efectivo',
+                vendedor: 'JHON',
+            });
+        });
+
+        it('discards questions and inquiries', () => {
+            expect(parseCodCollectionMessage('¿Este pedido va contraentrega?')).toBeNull();
+            expect(parseCodCollectionMessage('¿Faltan 80.000 de contraentrega?')).toBeNull();
+            expect(parseCodCollectionMessage('cuanto falta de contraentrega?')).toBeNull();
+        });
+
+        it('discards forward shipping intent without cash collection received', () => {
+            expect(parseCodCollectionMessage('El cliente de Cali va a pagar contraentrega')).toBeNull();
+            expect(parseCodCollectionMessage('Enviar contraentrega con Envía')).toBeNull();
+        });
+
+        it('discards non-COD messages', () => {
+            expect(parseCodCollectionMessage('Hola buenos días, envío comprobante')).toBeNull();
+            expect(parseCodCollectionMessage('')).toBeNull();
+        });
+    });
+
+    describe('isCodClarification', () => {
+        it('identifies plain COD clarification phrases', () => {
+            expect(isCodClarification('es contraentrega')).toBe(true);
+            expect(isCodClarification('pago contraentrega')).toBe(true);
+            expect(isCodClarification('va contraentrega')).toBe(true);
+            expect(isCodClarification('es contra entrega')).toBe(true);
+            expect(isCodClarification('pago en contraentrega')).toBe(true);
+            expect(isCodClarification('contraentrega')).toBe(true);
+            expect(isCodClarification('contras')).toBe(true);
+        });
+
+        it('returns false for COD cash inflows (these belong to parseCodCollectionMessage)', () => {
+            expect(isCodClarification('Recibí 80.000 de contraentrega')).toBe(false);
+            expect(isCodClarification('242.000 en efectivo de contras de ayer')).toBe(false);
+        });
+
+        it('returns false for unrelated messages', () => {
+            expect(isCodClarification('hola envio comprobante')).toBe(false);
+            expect(isCodClarification('')).toBe(false);
         });
     });
 });

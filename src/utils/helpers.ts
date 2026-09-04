@@ -308,3 +308,144 @@ export const detectBankByColor = async (imageBase64: string): Promise<string | u
     return undefined;
   }
 };
+
+// ── Cash-on-Delivery (COD) Helpers ──────────────────────────
+
+export interface CodCollectionData {
+  amount: string;
+  medioDePago: string;
+  vendedor: string;
+}
+
+const COD_KEYWORD_PATTERN = /\b(?:contraentrega|contraentregas|contra\s+entrega|contras)\b/i;
+const COD_DISCARD_PATTERN = /[?¿]|\b(?:cuanto\s+falta|faltan?|pendiente|va\s+a\s+pagar|por\s+pagar|enviar\s+contraentrega|guia)\b/i;
+const COD_RECEIPT_VERB_PATTERN = /\b(?:recibi|recibo|recolecte|entregaron|cobre|pago|pagaron|liquide|efectivo|de\s+contras|de\s+contraentrega)\b/i;
+
+/**
+ * Strips diacritics and converts string to lowercase for resilient regex boundary matching.
+ */
+function stripDiacritics(str: string): string {
+  return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+
+/**
+ * Parses and extracts cash-on-delivery (COD) collection reports from plain text messages.
+ * Detects amounts in any position while rejecting non-collection intents, shipping inquiries, and questions.
+ * Disambiguates monetary amounts from Colombian 10-digit phone numbers.
+ * 
+ * @param text - Raw message string.
+ * @returns Parsed COD collection details or null if not a valid COD cash inflow.
+ */
+export const parseCodCollectionMessage = (text: string): CodCollectionData | null => {
+  if (!text || typeof text !== 'string') return null;
+
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+
+  const normalized = stripDiacritics(trimmed);
+
+  // 1. Must match COD keywords
+  if (!COD_KEYWORD_PATTERN.test(normalized)) return null;
+
+  // 2. Reject questions or non-inflow contexts
+  if (COD_DISCARD_PATTERN.test(normalized)) return null;
+
+  // 3. Must have an indication of collection / cash received
+  if (!COD_RECEIPT_VERB_PATTERN.test(normalized)) return null;
+
+  // 4. Extract monetary amount candidates:
+  // Match formatted amounts (e.g. 242.000, 1'500.000, $80.000) or plain numbers (e.g. 95000)
+  const amountPattern = /(?:\$?\s*)((?:[1-9]\d{0,2}(?:[.'’]\d{3})+)|(?:[1-9]\d{4,8}))\b/g;
+  const matches = [...trimmed.matchAll(amountPattern)];
+
+  const validAmounts: { amountStr: string; cleanDigits: string; index: number }[] = [];
+
+  for (const match of matches) {
+    const rawMatch = match[1];
+    if (!rawMatch) continue;
+
+    const clean = rawMatch.replace(/[.'’,\s$]/g, '');
+
+    // Disambiguate against 10-digit Colombian phone numbers starting with 3
+    if (clean.length === 10 && clean.startsWith('3')) {
+      continue;
+    }
+
+    const num = parseInt(clean, 10);
+    // Typical COD order collection range in COP ($10,000 to $50,000,000)
+    if (num >= 10000 && num <= 50000000) {
+      validAmounts.push({
+        amountStr: rawMatch,
+        cleanDigits: clean,
+        index: match.index ?? 0,
+      });
+    }
+  }
+
+  if (validAmounts.length === 0) return null;
+
+  // In case of multiple numbers, pick the one closest to a collection keyword
+  let chosenAmount = validAmounts[0]!;
+  if (validAmounts.length > 1) {
+    const verbMatch = normalized.match(COD_RECEIPT_VERB_PATTERN);
+    if (verbMatch && verbMatch.index !== undefined) {
+      const verbIdx = verbMatch.index;
+      chosenAmount = validAmounts.reduce((prev, curr) =>
+        Math.abs(curr.index - verbIdx) < Math.abs(prev.index - verbIdx) ? curr : prev
+      );
+    }
+  }
+
+  // 5. Determine payment method (defaults to 'Efectivo' unless explicit channel detected)
+  let medioDePago = 'Efectivo';
+  if (/\bnequi\b/i.test(normalized)) medioDePago = 'Nequi';
+  else if (/\bbancolombia\b/i.test(normalized)) medioDePago = 'Bancolombia';
+  else if (/\bdaviplata\b/i.test(normalized)) medioDePago = 'Daviplata';
+  else if (/\bdavivienda\b/i.test(normalized)) medioDePago = 'Davivienda';
+  else if (/\b(?:nu|nubank)\b/i.test(normalized)) medioDePago = 'NU';
+  else if (/\bbbva\b/i.test(normalized)) medioDePago = 'BBVA';
+  else if (/\bwestern(?:\s+union)?\b/i.test(normalized)) medioDePago = 'Western Union';
+
+  // 6. Extract vendor or default to 'JHON'
+  const vendedor = extractVendor(trimmed);
+
+  return {
+    amount: chosenAmount.cleanDigits,
+    medioDePago,
+    vendedor,
+  };
+};
+
+const COD_CLARIFICATION_PATTERN = /^(?:es|pago(?:\s+en)?|va)?\s*(?:contraentrega|contraentregas|contra\s+entrega|contras)$/i;
+
+/**
+ * Determines whether a message specifies that an existing order is dispatched cash-on-delivery.
+ * Validates that the message is a pure clarification rather than a new cash collection report.
+ * 
+ * @param text - Raw message text.
+ * @returns True if the message indicates COD order modality without cash collection amount.
+ */
+export const isCodClarification = (text: string): boolean => {
+  if (!text || typeof text !== 'string') return false;
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+
+  // If it is a full collection message with amount, it is not a pure clarification
+  if (parseCodCollectionMessage(trimmed) !== null) {
+    return false;
+  }
+
+  const normalized = stripDiacritics(trimmed);
+
+  if (COD_CLARIFICATION_PATTERN.test(normalized)) {
+    return true;
+  }
+
+  // Also support phrases like "pago contraentrega" or "es contraentrega" inside short sentences (< 40 chars)
+  if (normalized.length <= 40 && /\b(?:es\s+contraentrega|pago\s+contraentrega|va\s+contraentrega|pago\s+en\s+contraentrega)\b/i.test(normalized)) {
+    return true;
+  }
+
+  return false;
+};
+

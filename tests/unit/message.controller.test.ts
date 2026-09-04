@@ -16,6 +16,7 @@ describe('message.controller.ts (Core Message Orchestrator)', () => {
     const CHAT_NAME = 'Contabilidad';
 
     beforeEach(() => {
+        memoryService.initDatabase(':memory:');
         _clearControllerStateForTesting();
         vi.restoreAllMocks();
     });
@@ -270,6 +271,207 @@ describe('message.controller.ts (Core Message Orchestrator)', () => {
             });
 
             expect(updateIncomeSpy).toHaveBeenCalledWith(12, { tipo: 'Abono' });
+        });
+    });
+
+    describe('Cash-on-Delivery (COD) Handling', () => {
+        it('registers COD cash collection inflow, saves transaction, and isolates from context (Mode A)', async () => {
+            vi.spyOn(memoryService, 'findTransactionByMessageId').mockReturnValue(null);
+            const saveTxSpy = vi.spyOn(memoryService, 'saveTransaction').mockImplementation(() => {});
+            const appendIncomeSpy = vi.spyOn(sheetsService, 'appendIncomeRow').mockResolvedValue({
+                nPedido: 'LG-010',
+                filaIngreso: 15,
+            });
+
+            const message: IncomingMessage = {
+                messageId: 'msg_cod_01',
+                chatId: CHAT_ID,
+                chatName: CHAT_NAME,
+                body: 'Recibí 80.000 de pago en contraentrega',
+                hasMedia: false,
+                hasQuotedMsg: false,
+            };
+
+            await processIncomingMessage(message);
+
+            expect(appendIncomeSpy).toHaveBeenCalledTimes(1);
+            expect(appendIncomeSpy).toHaveBeenCalledWith(expect.objectContaining({
+                tipo: 'Ingreso',
+                descripcion: 'PAGOS CONTRAENTREGA',
+                precioCompra: '80000',
+                medioDePago: 'Efectivo',
+                referenciaDePago: 'N/A',
+                cuentaDestino: 'N/A',
+                vendedor: 'JHON',
+            }));
+
+            expect(saveTxSpy).toHaveBeenCalledWith('msg_cod_01', 'LG-010', 15, 'N/A');
+
+            // Must NOT pollute chat context
+            const context = _getChatContextForTesting(CHAT_ID);
+            expect(context).not.toContain('Recibí 80.000 de pago en contraentrega');
+            expect(context).toBe('');
+
+            // Must NOT open active transaction
+            expect(_getActiveTransactionForTesting(CHAT_ID)).toBeNull();
+        });
+
+        it('does not close or interfere with an existing open transaction when COD message arrives', async () => {
+            // First simulate receipt opening active transaction
+            vi.spyOn(aiService, 'optimizeImageForOcr').mockResolvedValue('optimized_base64');
+            vi.spyOn(visionService, 'extractTextWithVisionEnhanced').mockResolvedValue('Comprobante Nequi $165.000 M999999');
+            vi.spyOn(memoryService, 'findTransactionByPaymentReference').mockReturnValue(null);
+            vi.spyOn(memoryService, 'saveTransaction').mockImplementation(() => {});
+            vi.spyOn(sheetsService, 'appendIncomeRow')
+                .mockResolvedValueOnce({ nPedido: 'LG-001', filaIngreso: 5 })
+                .mockResolvedValueOnce({ nPedido: 'LG-002', filaIngreso: 6 });
+
+            vi.spyOn(aiService, 'extractAccountingDataFromOcr').mockResolvedValue({
+                esComprobanteValido: true,
+                fecha: '05/08/2026',
+                tipo: 'Ingreso',
+                descripcion: 'Pedido al por menor',
+                precioCompra: '165000',
+                medioDePago: 'Nequi',
+                referenciaDePago: 'M999999',
+                cuentaDestino: '3143527475',
+                vendedor: 'Karol',
+            });
+
+            await processIncomingMessage({
+                messageId: 'receipt_msg_01',
+                chatId: CHAT_ID,
+                chatName: CHAT_NAME,
+                body: '',
+                hasMedia: true,
+                hasQuotedMsg: false,
+                media: { data: 'img_data', mimetype: 'image/jpeg' },
+            });
+
+            expect(_getActiveTransactionForTesting(CHAT_ID)).toEqual({
+                nPedido: 'LG-001',
+                messageId: 'receipt_msg_01',
+            });
+
+            // Now send COD cash report
+            vi.spyOn(memoryService, 'findTransactionByMessageId').mockReturnValue(null);
+            await processIncomingMessage({
+                messageId: 'msg_cod_02',
+                chatId: CHAT_ID,
+                chatName: CHAT_NAME,
+                body: '242.000 en efectivo de contras de ayer',
+                hasMedia: false,
+                hasQuotedMsg: false,
+            });
+
+            // Active transaction LG-001 must still be open!
+            expect(_getActiveTransactionForTesting(CHAT_ID)).toEqual({
+                nPedido: 'LG-001',
+                messageId: 'receipt_msg_01',
+            });
+        });
+
+        it('deduplicates COD message if messageId was already recorded in memory', async () => {
+            vi.spyOn(memoryService, 'findTransactionByMessageId').mockReturnValue({
+                messageId: 'msg_cod_duplicate',
+                nPedido: 'LG-010',
+                filaIngreso: 15,
+                filaVenta: null,
+                fechaRegistro: '2026-08-05T10:00:00Z',
+                referenciaPago: 'N/A',
+            });
+            const appendIncomeSpy = vi.spyOn(sheetsService, 'appendIncomeRow');
+
+            await processIncomingMessage({
+                messageId: 'msg_cod_duplicate',
+                chatId: CHAT_ID,
+                chatName: CHAT_NAME,
+                body: 'Recibí 80.000 de pago en contraentrega',
+                hasMedia: false,
+                hasQuotedMsg: false,
+            });
+
+            expect(appendIncomeSpy).not.toHaveBeenCalled();
+        });
+
+        it('updates description to PAGOS CONTRAENTREGA on active transaction when clarification arrives (Mode B)', async () => {
+            // Open an active transaction
+            vi.spyOn(aiService, 'optimizeImageForOcr').mockResolvedValue('opt_base64');
+            vi.spyOn(visionService, 'extractTextWithVisionEnhanced').mockResolvedValue('Comprobante Nequi $165.000 M777777');
+            vi.spyOn(memoryService, 'findTransactionByPaymentReference').mockReturnValue(null);
+            vi.spyOn(memoryService, 'saveTransaction').mockImplementation(() => {});
+            vi.spyOn(sheetsService, 'appendIncomeRow').mockResolvedValue({ nPedido: 'LG-020', filaIngreso: 22 });
+
+            vi.spyOn(aiService, 'extractAccountingDataFromOcr').mockResolvedValue({
+                esComprobanteValido: true,
+                fecha: '05/08/2026',
+                tipo: 'Ingreso',
+                descripcion: 'Pedido al por menor',
+                precioCompra: '165000',
+                medioDePago: 'Nequi',
+                referenciaDePago: 'M777777',
+                cuentaDestino: '3143527475',
+                vendedor: 'Karol',
+            });
+
+            await processIncomingMessage({
+                messageId: 'msg_active_tx',
+                chatId: CHAT_ID,
+                chatName: CHAT_NAME,
+                body: '',
+                hasMedia: true,
+                hasQuotedMsg: false,
+                media: { data: 'img_data', mimetype: 'image/jpeg' },
+            });
+
+            vi.spyOn(memoryService, 'findTransactionByMessageId').mockReturnValue({
+                messageId: 'msg_active_tx',
+                nPedido: 'LG-020',
+                filaIngreso: 22,
+                filaVenta: null,
+                fechaRegistro: '2026-08-05T10:00:00Z',
+                referenciaPago: 'M777777',
+            });
+
+            const updateIncomeSpy = vi.spyOn(sheetsService, 'updateIncomeRow').mockResolvedValue();
+
+            // Send clarification in plain text
+            await processIncomingMessage({
+                messageId: 'msg_clarification',
+                chatId: CHAT_ID,
+                chatName: CHAT_NAME,
+                body: 'es contraentrega',
+                hasMedia: false,
+                hasQuotedMsg: false,
+            });
+
+            expect(updateIncomeSpy).toHaveBeenCalledWith(22, { descripcion: 'PAGOS CONTRAENTREGA' });
+        });
+
+        it('updates description to PAGOS CONTRAENTREGA on quoted transaction via reply (Mode B)', async () => {
+            vi.spyOn(memoryService, 'findTransactionByOrderNumber').mockReturnValue({
+                messageId: 'msg_quoted_order',
+                nPedido: 'LG-030',
+                filaIngreso: 35,
+                filaVenta: null,
+                fechaRegistro: '2026-08-05T10:00:00Z',
+                referenciaPago: null,
+            });
+
+            const updateIncomeSpy = vi.spyOn(sheetsService, 'updateIncomeRow').mockResolvedValue();
+
+            await processIncomingMessage({
+                messageId: 'msg_reply_clarification',
+                chatId: CHAT_ID,
+                chatName: CHAT_NAME,
+                body: 'pago contraentrega',
+                hasMedia: false,
+                hasQuotedMsg: true,
+                quotedMsgId: 'msg_quoted_order',
+                quotedBody: '✅ LG-030 registrado',
+            });
+
+            expect(updateIncomeSpy).toHaveBeenCalledWith(35, { descripcion: 'PAGOS CONTRAENTREGA' });
         });
     });
 });
