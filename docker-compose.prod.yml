@@ -1,7 +1,7 @@
 services:
   app:
     container_name: node-bot-prod
-    image: ghcr.io/santiagozsh/bot-whatsapp-node:${IMAGE_TAG}
+    image: ghcr.io/santiagozsh/bot-whatsapp-node:${IMAGE_TAG:?IMAGE_TAG is required}
     restart: unless-stopped
     volumes:
       - ./auth_info:/app/auth_info

@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 jobs:
@@ -27,6 +27,17 @@ jobs:
     steps:
       - name: Checkout Source Code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Calculate Next Semantic Version
+        id: semver
+        uses: paulhatch/semantic-version@v5.4.0
+        with:
+          tag_prefix: "v"
+          major_pattern: "(BREAKING CHANGE|BREAKING)"
+          minor_pattern: "feat:"
+          format: "${major}.${minor}.${patch}"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -43,7 +54,7 @@ jobs:
         run: |
           REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
           IMAGE="ghcr.io/${REPO_LOWER}"
-          VERSION=$(node -p "require('./package.json').version")
+          VERSION="${{ steps.semver.outputs.version }}"
           echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tags=${IMAGE}:${VERSION},${IMAGE}:latest" >> "$GITHUB_OUTPUT"
@@ -58,6 +69,21 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Create Git Tag and GitHub Release
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.semver.outputs.version_tag }}"
+          if ! git rev-parse "${TAG}" >/dev/null 2>&1; then
+            echo "Creating release for ${TAG}..."
+            gh release create "${TAG}" \
+              --title "Release ${TAG}" \
+              --generate-notes
+          else
+            echo "Release ${TAG} already exists; skipping release creation."
+          fi
+
   deploy:
     name: Deploy to Production Server
     needs: build-and-push
@@ -68,7 +94,17 @@ jobs:
       - name: Pull and Restart Production Container
         run: |
           cd ${{ secrets.DEPLOY_PATH || '/home/jose/santiago/bot-whatsapp-node' }}
-          export IMAGE_TAG="${{ needs.build-and-push.outputs.version }}"
+          VERSION="${{ needs.build-and-push.outputs.version }}"
+          if [ -f .env ]; then
+            if grep -q "^IMAGE_TAG=" .env; then
+              sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${VERSION}/" .env
+            else
+              echo "IMAGE_TAG=${VERSION}" >> .env
+            fi
+          else
+            echo "IMAGE_TAG=${VERSION}" > .env
+          fi
+          export IMAGE_TAG="${VERSION}"
           docker compose -f docker-compose.prod.yml pull
           docker compose -f docker-compose.prod.yml up -d --remove-orphans
           docker compose -f docker-compose.prod.yml ps

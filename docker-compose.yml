@@ -7,6 +7,7 @@ services:
       dockerfile: Dockerfile
     image: elsantiagod/bot-app-dev:latest
     restart: unless-stopped
+    command: ["npm", "run", "dev:watch"]
     volumes:
       - .:/app
       - /app/node_modules
@@ -29,8 +30,23 @@ services:
       METRICS_PORT: ${METRICS_PORT}
       GROQ_API_KEY: ${GROQ_API_KEY}
 
+  test:
+    container_name: node-bot-test
+    profiles: ["test"]
+    build:
+      context: .
+      target: "dev"
+      dockerfile: Dockerfile
+    command: ["npm", "run", "test:watch"]
+    volumes:
+      - .:/app
+      - /app/node_modules
+    environment:
+      NODE_ENV: test
+
   alloy:
     container_name: grafana-alloy
+    profiles: ["monitoring"]
     image: grafana/alloy:latest
     restart: unless-stopped
     volumes:
