@@ -45,5 +45,9 @@ The non-destructive operation of populating blank customer and product cells in 
 _Avoid_: Sales merge, overwrite, replace, upsert
 
 **Order Classification (`Mayor vs. Menor`)**:
-An automated business rule classifying an order as wholesale (`al por mayor`) if total quantity ≥ 3 items or total price ≥ $250,000 COP; otherwise retail (`al por menor`).
-_Avoid_: Bulk order, regular sale
+An automated business rule classifying an order as wholesale (`Pedido mayorista`) if total quantity ≥ 3 items or total price > $250,000 COP; otherwise retail (`Pedido al por menor`). Orders recorded or clarified as `PAGOS CONTRAENTREGA` are strictly inviolable and are never overwritten by this rule.
+_Avoid_: Bulk order, regular sale, al por mayor
+
+**Canonical Vendor (`Vendedor Canónico`)**:
+A sales team member attributed to an Income record in strict uppercase (`JHON`, `EVELIN`, `KAROL`, `DAVID`), with `JHON` as the default fallback. Conversational diminutives and variations (e.g. `Eve`, `Jhoncito`, `Karolsita`, `Davidcito`, `VENTA-KAROL`) are deterministically normalized to their canonical uppercase names, while unrecognized names are preserved in uppercase.
+_Avoid_: Lowercase vendor names, unmapped nicknames

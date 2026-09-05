@@ -4,6 +4,8 @@ export const ADVANCE_ACCOUNTS: readonly string[] = ['ADVANCE_ACCOUNT_1', 'ADVANC
 export const BODEGA_ACCOUNTS: readonly string[] = ['BODEGA_ACCOUNT_1'];
 export const ADVANCE_NAMES: readonly string[] = ['ADVANCE_NAME_1'];
 export const KNOWN_VENDORS: readonly string[] = ['VENDOR_1'];
+export const DEFAULT_VENDOR = 'VENDOR_1';
+export const VENDOR_ALIASES: Readonly<Record<string, string>> = {};
 
 // Backward-compatible aliases
 export const CUENTAS_INGRESO = INCOME_ACCOUNTS;

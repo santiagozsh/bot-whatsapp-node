@@ -171,9 +171,9 @@ describe('helpers.ts', () => {
 
     describe('extractVendor', () => {
         it('extracts vendor name following "venta" keyword', () => {
-            expect(extractVendor('venta Karol reloj casio')).toBe('Karol');
-            expect(extractVendor('vendido por Evelin')).toBe('Evelin');
-            expect(extractVendor('venta: Alejandra')).toBe('Alejandra');
+            expect(extractVendor('venta Karol reloj casio')).toBe('KAROL');
+            expect(extractVendor('vendido por Evelin')).toBe('EVELIN');
+            expect(extractVendor('venta: Alejandra')).toBe('ALEJANDRA');
         });
 
         it('ignores stop words and defaults to JHON', () => {
@@ -318,7 +318,7 @@ describe('helpers.ts', () => {
             expect(result).toEqual({
                 amount: '80000',
                 medioDePago: 'Efectivo',
-                vendedor: 'Karol',
+                vendedor: 'KAROL',
             });
         });
 

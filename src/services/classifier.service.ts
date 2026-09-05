@@ -1,5 +1,6 @@
 import { readIncomeRows, readSalesRows, updateIncomeRow } from './sheets.service';
 import { logger } from '../utils/logger';
+import { classifyOrderDescription, WHOLESALE_QUANTITY_THRESHOLD, WHOLESALE_PRICE_THRESHOLD } from '../utils/helpers';
 import type { IncomeRow, SalesRow } from './sheets.service';
 
 const SPANISH_MONTHS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -32,13 +33,10 @@ export const parseNumericPrice = (priceString: string): number => {
 // Backward-compatible alias
 export const parsearPrecio = parseNumericPrice;
 
-const WHOLESALE_QUANTITY_THRESHOLD = 3;
-const WHOLESALE_PRICE_THRESHOLD = 250000;
-
 /**
- * Determines whether an order is wholesale ("Pedido al por mayor") or retail ("Pedido al por menor").
- * Evaluates total unit quantity (watches + accessories >= 3) if sales row is populated.
- * Falls back to price threshold (>= $250,000 COP) if sales row is missing.
+ * Determines whether an order is wholesale ("Pedido mayorista") or retail ("Pedido al por menor"),
+ * preserving "PAGOS CONTRAENTREGA" as inviolable.
+ * Evaluates whether total unit quantity >= 3 OR price > $250,000 COP.
  * 
  * @param incomeRecord - The income transaction record.
  * @param salesRecord - Optional linked sales row record.
@@ -46,24 +44,23 @@ const WHOLESALE_PRICE_THRESHOLD = 250000;
 export function determineOrderClassification(
     incomeRecord: IncomeRow,
     salesRecord?: SalesRow
-): 'Pedido al por mayor' | 'Pedido al por menor' {
-    if (salesRecord) {
-        const totalUnits = salesRecord.cantidadRelojes + salesRecord.cantidadOtros;
-        return totalUnits >= WHOLESALE_QUANTITY_THRESHOLD
-            ? 'Pedido al por mayor'
-            : 'Pedido al por menor';
+): 'Pedido mayorista' | 'Pedido al por menor' | 'PAGOS CONTRAENTREGA' {
+    if (incomeRecord.descripcion === 'PAGOS CONTRAENTREGA') {
+        return 'PAGOS CONTRAENTREGA';
     }
 
-    const price = parseNumericPrice(incomeRecord.precioCompra);
-    return price >= WHOLESALE_PRICE_THRESHOLD
-        ? 'Pedido al por mayor'
-        : 'Pedido al por menor';
+    const totalUnits = salesRecord
+        ? (salesRecord.cantidadRelojes + salesRecord.cantidadOtros)
+        : 0;
+
+    return classifyOrderDescription(incomeRecord.precioCompra, totalUnits);
 }
 
 /**
  * Nightly cron worker that inspects all income transactions recorded for the current day,
  * evaluates wholesale vs retail eligibility, and idempotently updates Column D (Descripción)
  * in Google Sheets if the classification differs from the default.
+ * Rows marked as "PAGOS CONTRAENTREGA" are strictly preserved.
  */
 export const classifyDailyOrders = async (): Promise<void> => {
     logger.info('CLASSIFIER', 'Starting daily order classification worker...');
@@ -85,10 +82,14 @@ export const classifyDailyOrders = async (): Promise<void> => {
     let updatedCount = 0;
 
     for (const income of todayOrders) {
+        if (income.descripcion === 'PAGOS CONTRAENTREGA') {
+            continue;
+        }
+
         const salesRecord = salesByOrderId.get(income.nPedido);
         const classification = determineOrderClassification(income, salesRecord);
 
-        if (income.descripcion !== classification) {
+        if (classification !== 'PAGOS CONTRAENTREGA' && income.descripcion !== classification) {
             await updateIncomeRow(income.fila, { descripcion: classification });
             logger.info('CLASSIFIER', `${income.nPedido}: "${income.descripcion}" → "${classification}"`);
             updatedCount++;
