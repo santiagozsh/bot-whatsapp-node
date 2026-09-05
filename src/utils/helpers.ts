@@ -1,6 +1,14 @@
 import sharp from 'sharp';
 import { logger } from './logger';
-import { INCOME_ACCOUNTS, ADVANCE_ACCOUNTS, BODEGA_ACCOUNTS, ADVANCE_NAMES, KNOWN_VENDORS } from './config.data';
+import {
+    INCOME_ACCOUNTS,
+    ADVANCE_ACCOUNTS,
+    BODEGA_ACCOUNTS,
+    ADVANCE_NAMES,
+    KNOWN_VENDORS,
+    DEFAULT_VENDOR,
+    VENDOR_ALIASES,
+} from './config.data';
 
 /**
  * Transforms a date string from "DD/MM/YYYY" format into the business-standard "D-Mes-YYYY" format.
@@ -189,7 +197,7 @@ export const resolvePaymentMethod = (
   return rawPaymentMethod ? rawPaymentMethod.trim() : 'No identificado';
 };
 
-const VENDOR_PATTERN = /(?:venta|vendedor|vendido por)[:\s]+(\w+)/i;
+const VENDOR_PATTERN = /(?:venta|vendedor|vendido por|asesor(?:a)?)[:\s-]+(\w+)/i;
 const SPANISH_STOP_WORDS = new Set([
   'en', 'de', 'del', 'la', 'el', 'que', 'con', 'sin', 'por', 'para',
   'un', 'una', 'los', 'las', 'y', 'o', 'no', 'se', 'su', 'al', 'a',
@@ -198,33 +206,112 @@ const SPANISH_STOP_WORDS = new Set([
 ]);
 
 /**
- * Extracts the sales vendor name from WhatsApp chat context using regex heuristics.
- * Ignores common Spanish prepositions and stop words, matching against known vendors when possible.
- * Defaults to 'JHON' if no explicit vendor is identified.
+ * Normalizes a raw vendor input string into a canonical vendor name in strict uppercase.
+ * Handles casing, removes operational prefixes (e.g. "venta-", "asesor "), maps
+ * diminutives/aliases, preserves unrecognized names in uppercase, and defaults to JHON.
  * 
  * @example
- * extractVendor("venta Karol 2 casio") // => "Karol"
- * extractVendor("vendido por Evelin") // => "Evelin"
+ * normalizeVendor("eve") // => "EVELIN"
+ * normalizeVendor("jhoncito") // => "JHON"
+ * normalizeVendor("VENTA-KAROL") // => "KAROL"
+ * normalizeVendor("carlos") // => "CARLOS"
+ * normalizeVendor("") // => "JHON"
+ * 
+ * @param rawName - Raw vendor text from context, reply, or prompt.
+ * @returns Normalized vendor string in uppercase.
+ */
+export const normalizeVendor = (rawName?: string | null): string => {
+  if (!rawName) return DEFAULT_VENDOR;
+
+  let cleaned = rawName.trim();
+  if (!cleaned) return DEFAULT_VENDOR;
+
+  // Clean operational prefixes like "venta-", "venta: ", "asesora: ", "vendido por "
+  cleaned = cleaned.replace(/^(?:venta|vendedor|asesor(?:a)?|vendido por)[:\s-]+/i, '').trim();
+
+  const lower = cleaned.toLowerCase();
+
+  const invalidPlaceholders = new Set([
+    '', 'n/a', 'na', 'no identificado', 'no detectado', 'desconocido', 'ninguno', 'null', 'undefined'
+  ]);
+  if (invalidPlaceholders.has(lower) || SPANISH_STOP_WORDS.has(lower)) {
+    return DEFAULT_VENDOR;
+  }
+
+  // 1. Direct canonical match
+  const canonicalMatch = KNOWN_VENDORS.find(v => v.toLowerCase() === lower);
+  if (canonicalMatch) {
+    return canonicalMatch;
+  }
+
+  // 2. Direct alias match
+  if (VENDOR_ALIASES[lower]) {
+    return VENDOR_ALIASES[lower];
+  }
+
+  // 3. Substring/prefix alias matching (e.g. "evelin la mejor", "eve la mejor")
+  for (const [alias, canonical] of Object.entries(VENDOR_ALIASES)) {
+    if (lower === alias || lower.startsWith(alias + ' ') || lower.endsWith(' ' + alias)) {
+      return canonical;
+    }
+  }
+
+  // 4. Fallback: preserve unknown vendor in uppercase
+  return cleaned.toUpperCase();
+};
+
+/**
+ * Extracts the sales vendor name from WhatsApp chat context using regex heuristics.
+ * Ignores common Spanish prepositions and stop words, matching against known vendors when possible.
+ * Normalizes all outputs to canonical uppercase or preserved uppercase. Defaults to 'JHON'.
+ * 
+ * @example
+ * extractVendor("venta Karol 2 casio") // => "KAROL"
+ * extractVendor("vendido por Eve") // => "EVELIN"
  * extractVendor("pago por transferencia") // => "JHON"
  * 
  * @param context - Accumulated WhatsApp text context.
- * @returns Capitalized vendor name.
+ * @returns Normalized uppercase vendor name.
  */
 export const extractVendor = (context: string): string => {
+  if (!context || !context.trim()) return DEFAULT_VENDOR;
+
   const match = context.match(VENDOR_PATTERN);
   if (match && match[1]) {
-    const rawName = match[1].toLowerCase();
+    const candidate = match[1].trim();
+    const candidateLower = candidate.toLowerCase();
 
-    if (SPANISH_STOP_WORDS.has(rawName) || rawName.length < 2) return 'JHON';
-
-    const knownVendor = KNOWN_VENDORS.find((v: string) => rawName.includes(v));
-    if (knownVendor) {
-      return knownVendor.charAt(0).toUpperCase() + knownVendor.slice(1);
+    if (SPANISH_STOP_WORDS.has(candidateLower) || candidate.length < 2) {
+      return DEFAULT_VENDOR;
     }
-    return match[1].charAt(0).toUpperCase() + match[1].slice(1).toLowerCase();
+
+    return normalizeVendor(candidate);
   }
 
-  return 'JHON';
+  // Check if context as a whole directly resolves to a vendor or alias (e.g. "EVELIN LA MEJOR")
+  const trimmed = context.trim();
+  const directNormalized = normalizeVendor(trimmed);
+  if (directNormalized !== trimmed.toUpperCase() || KNOWN_VENDORS.includes(directNormalized as any)) {
+    return directNormalized;
+  }
+
+  // Check if any canonical vendor is present as a standalone word
+  for (const vendor of KNOWN_VENDORS) {
+    const regex = new RegExp(`\\b${vendor}\\b`, 'i');
+    if (regex.test(context)) {
+      return vendor;
+    }
+  }
+
+  // Check if any alias is present as a standalone phrase
+  for (const [alias, canonical] of Object.entries(VENDOR_ALIASES)) {
+    const regex = new RegExp(`\\b${alias}\\b`, 'i');
+    if (regex.test(context)) {
+      return canonical;
+    }
+  }
+
+  return DEFAULT_VENDOR;
 };
 
 const MIN_USEFUL_CHARS = 8;
@@ -447,5 +534,32 @@ export const isCodClarification = (text: string): boolean => {
   }
 
   return false;
+};
+
+export const WHOLESALE_QUANTITY_THRESHOLD = 3;
+export const WHOLESALE_PRICE_THRESHOLD = 250000;
+
+/**
+ * Classifies an order description as wholesale ("Pedido mayorista") or retail ("Pedido al por menor").
+ * Evaluates whether total units >= 3 OR price > $250,000 COP.
+ * Exactly $250,000 COP with < 3 units classifies as "Pedido al por menor".
+ * 
+ * @param price - Raw price string or numeric price integer.
+ * @param totalUnits - Optional total units count (watches + accessories).
+ * @returns 'Pedido mayorista' | 'Pedido al por menor'
+ */
+export const classifyOrderDescription = (
+  price: number | string,
+  totalUnits: number = 0
+): 'Pedido mayorista' | 'Pedido al por menor' => {
+  const numericPrice = typeof price === 'number'
+    ? price
+    : parseInt(String(price).replace(/[^0-9]/g, ''), 10) || 0;
+
+  if (totalUnits >= WHOLESALE_QUANTITY_THRESHOLD || numericPrice > WHOLESALE_PRICE_THRESHOLD) {
+    return 'Pedido mayorista';
+  }
+
+  return 'Pedido al por menor';
 };
 

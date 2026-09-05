@@ -3,7 +3,7 @@ import * as dotenv from 'dotenv';
 import sharp from 'sharp';
 import { buildAccountingPrompt, buildCustomerPrompt } from '../utils/prompts';
 import { parseProductList } from '../utils/luxurygotti.data';
-import { executeWithRetry, classifyIncomeType, extractVendor, resolvePaymentMethod } from '../utils/helpers';
+import { executeWithRetry, classifyIncomeType, extractVendor, normalizeVendor, resolvePaymentMethod, classifyOrderDescription } from '../utils/helpers';
 import { logger } from '../utils/logger';
 import { recordOpenAiTokens, startOpenAiTimer } from './metrics.service';
 import type { DatosOCRBrutos, DatosIngreso, DatosCliente } from '../types';
@@ -119,11 +119,15 @@ export const extractAccountingDataFromOcr = async (
         const vendor = extractVendor(textContext);
         const paymentMethod = resolvePaymentMethod(raw.medioDePago, destinationAccount, bankByColor);
 
+        const initialDescription = raw.descripcion === 'PAGOS CONTRAENTREGA'
+            ? 'PAGOS CONTRAENTREGA'
+            : classifyOrderDescription(raw.precioCompra || '0');
+
         return {
             esComprobanteValido: true,
             fecha:            raw.fecha            || 'N/A',
             tipo:             incomeType,
-            descripcion:      raw.descripcion      || 'Pedido al por menor',
+            descripcion:      initialDescription,
             precioCompra:     raw.precioCompra     || '0',
             medioDePago:      paymentMethod,
             referenciaDePago: raw.referenciaDePago || 'N/A',
@@ -175,12 +179,17 @@ export const extractCustomerDataFromText = async (textBlock: string): Promise<Da
 
         const productData = parseProductList(textBlock);
 
+        const vendorCandidate = raw.vendedor?.trim();
+        const normalizedVendor = (vendorCandidate && vendorCandidate !== 'N/A' && vendorCandidate !== 'no identificado')
+            ? normalizeVendor(vendorCandidate)
+            : 'N/A';
+
         const customerData: DatosCliente = {
             nombreCliente:  raw.nombreCliente || 'N/A',
             email:          raw.email         || 'N/A',
             telefono:       raw.telefono      || 'N/A',
             municipio:      raw.municipio     || 'N/A',
-            vendedor:       raw.vendedor      || 'N/A',
+            vendedor:       normalizedVendor,
             producto:       productData.lineasProducto.join(', '),
             cantidadRelojes: productData.cantidadRelojes,
             cantidadOtros:   productData.cantidadOtros,

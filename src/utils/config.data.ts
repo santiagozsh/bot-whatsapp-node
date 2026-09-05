@@ -43,15 +43,55 @@ export const ADVANCE_NAMES: readonly string[] = [
 ];
 
 /**
- * Recognized vendor nicknames used for normalized attribution.
+ * Canonical recognized vendor identifiers in strict uppercase.
  */
 export const KNOWN_VENDORS: readonly string[] = [
-    'evelin',
-    'alejandra',
-    'aleja',
-    'karol',
-    'david',
+    'JHON',
+    'EVELIN',
+    'KAROL',
+    'DAVID',
 ];
+
+export const DEFAULT_VENDOR = 'JHON';
+
+/**
+ * Common nicknames, diminutives, and conversational variations mapped to canonical vendors.
+ */
+export const VENDOR_ALIASES: Readonly<Record<string, string>> = {
+    // EVELIN
+    'eve': 'EVELIN',
+    'evelyn': 'EVELIN',
+    'evy': 'EVELIN',
+    'evi': 'EVELIN',
+    'evelina': 'EVELIN',
+    'evelincita': 'EVELIN',
+    'evelinsita': 'EVELIN',
+    'evelin la mejor': 'EVELIN',
+    'eve la mejor': 'EVELIN',
+
+    // JHON
+    'jhoncito': 'JHON',
+    'jhonsito': 'JHON',
+    'jon': 'JHON',
+    'john': 'JHON',
+    'joncito': 'JHON',
+    'jhonny': 'JHON',
+    'jhony': 'JHON',
+
+    // KAROL
+    'karolsita': 'KAROL',
+    'karolcita': 'KAROL',
+    'carol': 'KAROL',
+    'carito': 'KAROL',
+    'carolcita': 'KAROL',
+    'carolsita': 'KAROL',
+
+    // DAVID
+    'davidcito': 'DAVID',
+    'davidsito': 'DAVID',
+    'davo': 'DAVID',
+    'deivid': 'DAVID',
+};
 
 // ── Backward-Compatible Aliases ───────────────────────────────
 export const CUENTAS_INGRESO = INCOME_ACCOUNTS;

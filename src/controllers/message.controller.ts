@@ -2,7 +2,7 @@ import { extractAccountingDataFromOcr, extractCustomerDataFromText, optimizeImag
 import { appendIncomeRow, appendSalesRow, enrichSalesRow, updateIncomeRow } from '../services/sheets.service';
 import { saveTransaction, updateSalesRowIndex, findTransactionByMessageId, findTransactionByPaymentReference, findTransactionByOrderNumber } from '../services/memory.service';
 import { extractTextWithVisionEnhanced } from '../services/vision.service';
-import { formatDate, normalizeOcrText, isUsefulText, detectBankByColor, parseCodCollectionMessage, isCodClarification, type CodCollectionData } from '../utils/helpers';
+import { formatDate, normalizeOcrText, isUsefulText, detectBankByColor, parseCodCollectionMessage, isCodClarification, normalizeVendor, WHOLESALE_QUANTITY_THRESHOLD, type CodCollectionData } from '../utils/helpers';
 import { logger } from '../utils/logger';
 import { recordMessageProcessed } from '../services/metrics.service';
 import type { IncomeData, CustomerData } from '../types';
@@ -55,6 +55,7 @@ export interface PendingTransaction {
     orderNumber: string;
     messageId: string;
     date: string;
+    isCod?: boolean;
 }
 
 // ── In-Memory Chat State ─────────────────────────────────────
@@ -203,12 +204,19 @@ async function closePreviousTransaction(chatId: string): Promise<void> {
     const txRecord = findTransactionByMessageId(transaction.messageId);
     if (txRecord) {
         if (customerData.vendedor && customerData.vendedor !== 'N/A') {
-            await updateIncomeRow(txRecord.filaIngreso, { vendedor: customerData.vendedor });
+            await updateIncomeRow(txRecord.filaIngreso, { vendedor: normalizeVendor(customerData.vendedor) });
         }
         const hasCodClarification = contextText.split('\n').some(line => isCodClarification(line));
         if (hasCodClarification) {
             await updateIncomeRow(txRecord.filaIngreso, { descripcion: 'PAGOS CONTRAENTREGA' });
+            transaction.isCod = true;
             logger.info('COD', `Closed transaction ${transaction.orderNumber} updated to PAGOS CONTRAENTREGA from context`);
+        } else if (!transaction.isCod) {
+            const totalUnits = (customerData.cantidadRelojes || 0) + (customerData.cantidadOtros || 0);
+            if (totalUnits >= WHOLESALE_QUANTITY_THRESHOLD) {
+                await updateIncomeRow(txRecord.filaIngreso, { descripcion: 'Pedido mayorista' });
+                logger.info('CLASSIFIER', `Closed transaction ${transaction.orderNumber} updated to Pedido mayorista (${totalUnits} units)`);
+            }
         }
     }
 
@@ -280,7 +288,12 @@ async function recordIncomeReceipt(
 
     saveTransaction(ctx.messageId, nPedido, filaIngreso, incomeData.referenciaDePago || null);
 
-    activeTransactionByChatId.set(ctx.chatId, { orderNumber: nPedido, messageId: ctx.messageId, date: incomeData.fecha });
+    activeTransactionByChatId.set(ctx.chatId, {
+        orderNumber: nPedido,
+        messageId: ctx.messageId,
+        date: incomeData.fecha,
+        isCod: incomeData.descripcion === 'PAGOS CONTRAENTREGA',
+    });
 
     scheduleFallbackClosingTimer(ctx.chatId);
 
@@ -366,7 +379,7 @@ async function handleCodCollectionMessage(
         medioDePago: codData.medioDePago,
         referenciaDePago: 'N/A',
         cuentaDestino: 'N/A',
-        vendedor: codData.vendedor,
+        vendedor: normalizeVendor(codData.vendedor),
     };
 
     const result = await appendIncomeRow(incomeData);
@@ -459,7 +472,13 @@ async function processQuotedTextMessage(ctx: IncomingMessage): Promise<void> {
 
         const txRecord = findTransactionByMessageId(activeTransaction.messageId);
         if (txRecord && customerData.vendedor && customerData.vendedor !== 'N/A') {
-            await updateIncomeRow(txRecord.filaIngreso, { vendedor: customerData.vendedor });
+            await updateIncomeRow(txRecord.filaIngreso, { vendedor: normalizeVendor(customerData.vendedor) });
+        }
+
+        const totalUnits = (customerData.cantidadRelojes || 0) + (customerData.cantidadOtros || 0);
+        if (txRecord && !activeTransaction.isCod && totalUnits >= WHOLESALE_QUANTITY_THRESHOLD) {
+            await updateIncomeRow(txRecord.filaIngreso, { descripcion: 'Pedido mayorista' });
+            logger.info('CLASSIFIER', `Active transaction ${activeTransaction.orderNumber} updated to Pedido mayorista via reply (${totalUnits} units)`);
         }
 
         if (!hasUsefulSalesData(customerData)) return;
@@ -469,15 +488,16 @@ async function processQuotedTextMessage(ctx: IncomingMessage): Promise<void> {
         return;
     }
 
-    // Direct field corrections: "tipo: Abono" or "vendedor: Karol"
-    const fieldCorrectionPattern = /^(?<field>tipo|vendedor):\s*(?<value>.+)$/i;
+    // Direct field corrections: "tipo: Abono", "vendedor: Karol", or "descripcion: Pedido mayorista"
+    const fieldCorrectionPattern = /^(?<field>tipo|vendedor|descripcion):\s*(?<value>.+)$/i;
     const correctionMatch = ctx.body.match(fieldCorrectionPattern);
     const fieldGroup = correctionMatch?.groups?.field;
     const valueGroup = correctionMatch?.groups?.value;
 
     if (fieldGroup && valueGroup) {
-        const fieldName = fieldGroup.toLowerCase() as 'tipo' | 'vendedor';
-        const fieldValue = valueGroup.trim();
+        const fieldName = fieldGroup.toLowerCase() as 'tipo' | 'vendedor' | 'descripcion';
+        const rawValue = valueGroup.trim();
+        const fieldValue = fieldName === 'vendedor' ? normalizeVendor(rawValue) : rawValue;
         const quotedText = ctx.quotedBody || '';
         const orderIdMatch = quotedText.match(/LG-\d+/);
 
@@ -496,15 +516,24 @@ async function processQuotedTextMessage(ctx: IncomingMessage): Promise<void> {
         }
     }
 
-    // Late reply to an already-closed transaction
-    const closedTransaction = findTransactionByMessageId(quotedId);
+    // Late reply to an already-closed transaction (by receipt messageId or order number in quoted text)
+    const quotedText = ctx.quotedBody || '';
+    const orderIdMatch = quotedText.match(/LG-\d+/);
+    const closedTransaction = findTransactionByMessageId(quotedId) || (orderIdMatch ? findTransactionByOrderNumber(orderIdMatch[0]) : null);
+
     if (closedTransaction) {
         logger.info('REPLY', `Late reply for closed transaction ${closedTransaction.nPedido}`);
         const customerData = await extractCustomerDataFromText(ctx.body);
         if (!customerData) return;
 
         if (customerData.vendedor && customerData.vendedor !== 'N/A') {
-            await updateIncomeRow(closedTransaction.filaIngreso, { vendedor: customerData.vendedor });
+            await updateIncomeRow(closedTransaction.filaIngreso, { vendedor: normalizeVendor(customerData.vendedor) });
+        }
+
+        const totalUnits = (customerData.cantidadRelojes || 0) + (customerData.cantidadOtros || 0);
+        if (totalUnits >= WHOLESALE_QUANTITY_THRESHOLD) {
+            await updateIncomeRow(closedTransaction.filaIngreso, { descripcion: 'Pedido mayorista' });
+            logger.info('CLASSIFIER', `Closed transaction ${closedTransaction.nPedido} updated to Pedido mayorista via reply (${totalUnits} units)`);
         }
 
         if (!hasUsefulSalesData(customerData)) return;

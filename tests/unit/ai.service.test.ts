@@ -83,7 +83,7 @@ describe('ai.service.ts (AI & Vision Processing)', () => {
             expect(result?.fecha).toBe('05/08/2026');
             expect(result?.precioCompra).toBe('165000');
             expect(result?.tipo).toBe('Ingreso');
-            expect(result?.vendedor).toBe('Karol');
+            expect(result?.vendedor).toBe('KAROL');
             expect(result?.medioDePago).toBe('Nequi');
         });
 
@@ -196,7 +196,7 @@ describe('ai.service.ts (AI & Vision Processing)', () => {
             expect(result?.nombreCliente).toBe('Yenci Perez');
             expect(result?.municipio).toBe('Armenia');
             expect(result?.telefono).toBe('3106131751');
-            expect(result?.vendedor).toBe('Karol');
+            expect(result?.vendedor).toBe('KAROL');
             expect(result?.cantidadRelojes).toBe(2);
             expect(result?.cantidadOtros).toBe(1);
         });

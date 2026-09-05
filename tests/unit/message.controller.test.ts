@@ -91,7 +91,7 @@ describe('message.controller.ts (Core Message Orchestrator)', () => {
                     esComprobanteValido: true,
                     fecha: '05/08/2026',
                     tipo: 'Ingreso',
-                    descripcion: 'Pedido al por mayor',
+                    descripcion: 'Pedido mayorista',
                     precioCompra: '320000',
                     medioDePago: 'Bancolombia',
                     referenciaDePago: 'B222222',
@@ -247,7 +247,7 @@ describe('message.controller.ts (Core Message Orchestrator)', () => {
     });
 
     describe('Quoted replies & Field corrections', () => {
-        it('applies direct field correction on reply (e.g., "tipo: Abono" or "vendedor: Karol")', async () => {
+        it('applies direct field correction on reply (e.g., "tipo: Abono", "vendedor: Karol", or "descripcion: Pedido mayorista")', async () => {
             vi.spyOn(memoryService, 'findTransactionByOrderNumber').mockReturnValue({
                 messageId: 'msg_target',
                 nPedido: 'LG-007',
@@ -260,7 +260,7 @@ describe('message.controller.ts (Core Message Orchestrator)', () => {
             const updateIncomeSpy = vi.spyOn(sheetsService, 'updateIncomeRow').mockResolvedValue();
 
             await processIncomingMessage({
-                messageId: 'msg_correction',
+                messageId: 'msg_correction_1',
                 chatId: CHAT_ID,
                 chatName: CHAT_NAME,
                 body: 'tipo: Abono',
@@ -271,6 +271,87 @@ describe('message.controller.ts (Core Message Orchestrator)', () => {
             });
 
             expect(updateIncomeSpy).toHaveBeenCalledWith(12, { tipo: 'Abono' });
+
+            await processIncomingMessage({
+                messageId: 'msg_correction_2',
+                chatId: CHAT_ID,
+                chatName: CHAT_NAME,
+                body: 'descripcion: Pedido mayorista',
+                hasMedia: false,
+                hasQuotedMsg: true,
+                quotedMsgId: 'msg_target',
+                quotedBody: '✅ LG-007 registrado',
+            });
+
+            expect(updateIncomeSpy).toHaveBeenCalledWith(12, { descripcion: 'Pedido mayorista' });
+        });
+
+        it('re-evaluates description to Pedido mayorista when reply to active receipt image has >= 3 units', async () => {
+            vi.spyOn(aiService, 'optimizeImageForOcr').mockResolvedValue('optimized_base64');
+            vi.spyOn(visionService, 'extractTextWithVisionEnhanced').mockResolvedValue('Comprobante Nequi $35.000');
+            vi.spyOn(aiService, 'extractAccountingDataFromOcr').mockResolvedValue({
+                esComprobanteValido: true,
+                fecha: '02/09/2026',
+                tipo: 'Ingreso',
+                descripcion: 'Pedido al por menor',
+                precioCompra: '35000',
+                medioDePago: 'Nequi',
+                referenciaDePago: 'M16029091',
+                cuentaDestino: '3106131751',
+                vendedor: 'JHON',
+            });
+            vi.spyOn(sheetsService, 'appendIncomeRow').mockResolvedValue({ nPedido: 'LG-008', filaIngreso: 15 });
+
+            // Simulate active transaction in memory
+            vi.spyOn(memoryService, 'findTransactionByMessageId').mockReturnValue({
+                messageId: 'msg_receipt_active',
+                nPedido: 'LG-008',
+                filaIngreso: 15,
+                filaVenta: null,
+                fechaRegistro: '2026-09-02T10:00:00Z',
+                referenciaPago: 'M16029091',
+            });
+
+            const updateIncomeSpy = vi.spyOn(sheetsService, 'updateIncomeRow').mockResolvedValue();
+            vi.spyOn(sheetsService, 'appendSalesRow').mockResolvedValue(10);
+            vi.spyOn(aiService, 'extractCustomerDataFromText').mockResolvedValue({
+                nombreCliente: 'N/A',
+                email: 'N/A',
+                telefono: 'N/A',
+                municipio: 'N/A',
+                vendedor: 'N/A',
+                producto: '3 ROLEX',
+                cantidadRelojes: 3,
+                cantidadOtros: 0,
+            });
+
+            // Set active transaction in controller state
+            await processIncomingMessage({
+                messageId: 'msg_receipt_active',
+                chatId: CHAT_ID,
+                chatName: CHAT_NAME,
+                body: '',
+                hasMedia: true,
+                mediaMimetype: 'image/jpeg',
+                media: { data: 'fake_image_base64', mimetype: 'image/jpeg' },
+                hasQuotedMsg: false,
+            });
+
+            // Reset spy after initial receipt insertion
+            updateIncomeSpy.mockClear();
+
+            // Reply to the receipt photo with "3 ROLEX"
+            await processIncomingMessage({
+                messageId: 'msg_reply_3_rolex',
+                chatId: CHAT_ID,
+                chatName: CHAT_NAME,
+                body: '3 ROLEX',
+                hasMedia: false,
+                hasQuotedMsg: true,
+                quotedMsgId: 'msg_receipt_active',
+            });
+
+            expect(updateIncomeSpy).toHaveBeenCalledWith(15, { descripcion: 'Pedido mayorista' });
         });
     });
 

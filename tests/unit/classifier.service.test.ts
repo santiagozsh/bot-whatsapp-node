@@ -47,7 +47,7 @@ describe('classifier.service.ts (Nightly Order Classifier)', () => {
                 cantidadOtros: 1, // 2 + 1 = 3 units
             };
 
-            expect(determineOrderClassification(income, sales)).toBe('Pedido al por mayor');
+            expect(determineOrderClassification(income, sales)).toBe('Pedido mayorista');
         });
 
         it('classifies as retail when sales record has < 3 total units', () => {
@@ -93,7 +93,7 @@ describe('classifier.service.ts (Nightly Order Classifier)', () => {
                 precioCompra: '150000',
             };
 
-            expect(determineOrderClassification(incomeWholesale)).toBe('Pedido al por mayor');
+            expect(determineOrderClassification(incomeWholesale)).toBe('Pedido mayorista');
             expect(determineOrderClassification(incomeRetail)).toBe('Pedido al por menor');
         });
     });
@@ -158,7 +158,7 @@ describe('classifier.service.ts (Nightly Order Classifier)', () => {
 
             // Only LG-001 (row 2) needed an update
             expect(updateSpy).toHaveBeenCalledTimes(1);
-            expect(updateSpy).toHaveBeenCalledWith(2, { descripcion: 'Pedido al por mayor' });
+            expect(updateSpy).toHaveBeenCalledWith(2, { descripcion: 'Pedido mayorista' });
         });
     });
 });

@@ -61,8 +61,8 @@ RULES:
 - Only extract explicit data, do not hallucinate. If not found -> "N/A".
 - telefono: digits only.
 - municipio: city/municipality name only, without department.
-- nombreCliente: ONLY if there is an explicit buyer (e.g. "nombre: Juan", "cliente: Maria", "pedido de Pedro"). DO NOT confuse with "venta Evelin/Alejandra/Karol" (vendor, not customer). If only "venta X" -> "N/A".
-- vendedor: "venta" + name (Evelin, Alejandra, Aleja, Karol) or "vendedor: name". Otherwise -> "N/A".
+- nombreCliente: ONLY if there is an explicit buyer (e.g. "nombre: Juan", "cliente: Maria", "pedido de Pedro"). DO NOT confuse with "venta Jhon/Evelin/Karol/David" (vendor, not customer). If only "venta X" -> "N/A".
+- vendedor: "venta" + name (Jhon, Evelin, Karol, David) or "vendedor: name". Otherwise -> "N/A".
 
 JSON: {"nombreCliente":"","email":"","telefono":"","municipio":"","vendedor":""}`;
 };
