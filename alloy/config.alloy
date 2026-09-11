@@ -22,6 +22,16 @@ prometheus.remote_write "grafana_cloud" {
       username = sys.env("GRAFANA_CLOUD_PROMETHEUS_USER")
       password = sys.env("GRAFANA_CLOUD_API_KEY")
     }
+
+    queue_config {
+      max_shards           = 2
+      min_shards           = 1
+      max_samples_per_send = 1000
+      capacity             = 2500
+      min_backoff          = "500ms"
+      max_backoff          = "30s"
+      retry_on_http_429    = true
+    }
   }
 }
 
