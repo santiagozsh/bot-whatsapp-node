@@ -24,13 +24,14 @@ prometheus.remote_write "grafana_cloud" {
     }
 
     queue_config {
-      max_shards           = 2
+      max_shards           = 1
       min_shards           = 1
-      max_samples_per_send = 1000
-      capacity             = 2500
-      min_backoff          = "500ms"
+      max_samples_per_send = 5000
+      capacity             = 5000
+      min_backoff          = "5s"
       max_backoff          = "30s"
       retry_on_http_429    = true
+      sample_age_limit     = "30m"
     }
   }
 }
