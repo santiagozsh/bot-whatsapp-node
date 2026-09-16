@@ -9,6 +9,20 @@ let groqClientInstance: OpenAI | null = null;
 let lastGroqRequestTimestamp = 0;
 let minRequestIntervalMs = 4500;
 
+export const DEFAULT_VISION_MODEL = 'qwen/qwen3.8-27b';
+export const FALLBACK_VISION_MODELS = [
+    'qwen/qwen3.8-27b',
+    'qwen/qwen3.6-27b',
+];
+
+interface CachedModelInfo {
+    model: string;
+    cachedAt: number;
+}
+
+let activeVisionModelCache: CachedModelInfo | null = null;
+const MODEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
 function getGroqClient(): OpenAI | null {
     if (groqClientInstance !== null) {
         return groqClientInstance;
@@ -37,6 +51,111 @@ export function _setGroqClientForTesting(client: any): void {
 export function _setGroqPacingForTesting(intervalMs: number): void {
     minRequestIntervalMs = intervalMs;
     lastGroqRequestTimestamp = 0;
+}
+
+/**
+ * Resets the in-memory vision model cache for testing.
+ */
+export function _resetVisionModelCacheForTesting(): void {
+    activeVisionModelCache = null;
+}
+
+/**
+ * Discovers active multimodal vision models from the Groq API.
+ * Identifies active models advertising 'image' in their input modalities.
+ * 
+ * @param client - OpenAI-compatible Groq client.
+ * @param excludeModels - List of model identifiers to ignore (e.g. failing or deprecated models).
+ * @returns Best matching active vision model ID, or null if none discovered.
+ */
+export async function discoverActiveVisionModel(
+    client: OpenAI,
+    excludeModels: string[] = []
+): Promise<string | null> {
+    try {
+        if (!client.models || typeof client.models.list !== 'function') {
+            return null;
+        }
+
+        const response = await client.models.list();
+        const models = (response as any).data || [];
+
+        const visionCandidates = models
+            .filter((m: any) => {
+                const isActive = m.active !== false;
+                const hasImageModality = Array.isArray(m.input_modalities) && m.input_modalities.includes('image');
+                const isExcluded = excludeModels.includes(m.id);
+                return isActive && hasImageModality && !isExcluded;
+            })
+            .sort((a: any, b: any) => (b.created || 0) - (a.created || 0));
+
+        if (visionCandidates.length > 0) {
+            const selected = visionCandidates[0].id;
+            logger.info('GROQ', `Discovered active vision model from Groq API: ${selected}`);
+            return selected;
+        }
+    } catch (error) {
+        logger.warn('GROQ', 'Failed to dynamically query active models from Groq API:', error);
+    }
+    return null;
+}
+
+/**
+ * Resolves the vision model to use, prioritizing runtime discovery and caching.
+ * Falls back to curated models or environment overrides when necessary.
+ */
+export async function getOrResolveVisionModel(
+    client: OpenAI,
+    forceRefresh: boolean = false,
+    excludeModels: string[] = []
+): Promise<string> {
+    // 1. Explicit env override if set and not excluded
+    const envModel = process.env.GROQ_MODEL?.trim();
+    if (envModel && !excludeModels.includes(envModel)) {
+        return envModel;
+    }
+
+    // 2. Return cached model if valid and not excluded
+    const now = Date.now();
+    if (
+        !forceRefresh &&
+        activeVisionModelCache &&
+        now - activeVisionModelCache.cachedAt < MODEL_CACHE_TTL_MS &&
+        !excludeModels.includes(activeVisionModelCache.model)
+    ) {
+        return activeVisionModelCache.model;
+    }
+
+    // 3. Dynamic discovery from Groq API
+    const discovered = await discoverActiveVisionModel(client, excludeModels);
+    if (discovered) {
+        activeVisionModelCache = { model: discovered, cachedAt: now };
+        return discovered;
+    }
+
+    // 4. Resilient static fallback
+    const fallback = FALLBACK_VISION_MODELS.find((m) => !excludeModels.includes(m)) || DEFAULT_VISION_MODEL;
+    activeVisionModelCache = { model: fallback, cachedAt: now };
+    logger.info('GROQ', `Using fallback vision model: ${fallback}`);
+    return fallback;
+}
+
+/**
+ * Evaluates whether an error indicates model unavailability (404, not found, or decommissioned).
+ */
+export function isModelUnavailableError(error: any): boolean {
+    const status = error?.status || error?.response?.status;
+    const code = error?.code || error?.error?.code;
+    const message = (error?.message || error?.error?.message || '').toLowerCase();
+
+    return (
+        status === 404 ||
+        code === 'model_not_found' ||
+        code === 'model_decommissioned' ||
+        message.includes('does not exist') ||
+        message.includes('do not have access to it') ||
+        message.includes('decommissioned')
+    );
 }
 
 async function applyGroqRatePacing(): Promise<void> {
@@ -84,40 +203,61 @@ export async function extractTextWithGroqVision(
 
         await applyGroqRatePacing();
 
-        const modelName = process.env.GROQ_MODEL || 'qwen/qwen3.6-27b';
-        logger.info('GROQ', `Extracting text with Groq Vision (${modelName})...`);
+        const excludedModels: string[] = [];
+        let modelName = await getOrResolveVisionModel(client, false, excludedModels);
+        const maxModelAttempts = 3;
 
-        const response = await executeWithRetry(async () => {
-            return await client.chat.completions.create({
-                model: modelName,
-                messages: [
-                    {
-                        role: 'user',
-                        content: [
-                            { type: 'text', text: VISION_SYSTEM_PROMPT },
+        for (let attempt = 0; attempt < maxModelAttempts; attempt++) {
+            logger.info('GROQ', `Extracting text with Groq Vision (${modelName})...`);
+
+            try {
+                const response = await executeWithRetry(async () => {
+                    return await client.chat.completions.create({
+                        model: modelName,
+                        messages: [
                             {
-                                type: 'image_url',
-                                image_url: {
-                                    url: `data:${mimeType};base64,${imageBase64}`,
-                                },
+                                role: 'user',
+                                content: [
+                                    { type: 'text', text: VISION_SYSTEM_PROMPT },
+                                    {
+                                        type: 'image_url',
+                                        image_url: {
+                                            url: `data:${mimeType};base64,${imageBase64}`,
+                                        },
+                                    },
+                                ],
                             },
                         ],
-                    },
-                ],
-                temperature: 0.1,
-                max_completion_tokens: 1024,
-            });
-        }, 4, 4000); // 4 attempts with 4s backoff on 429
+                        temperature: 0.1,
+                        max_completion_tokens: 1024,
+                    });
+                }, 4, 4000); // 4 attempts with 4s backoff on 429
 
-        const extractedText = (response.choices[0]?.message?.content || '').trim();
-        if (!extractedText) {
-            logger.warn('GROQ', 'No text extracted by Groq Vision');
-            return '';
+                const extractedText = (response.choices[0]?.message?.content || '').trim();
+                if (!extractedText) {
+                    logger.warn('GROQ', 'No text extracted by Groq Vision');
+                    return '';
+                }
+
+                logger.info('GROQ', `Text successfully extracted via Groq Vision (${extractedText.length} chars)`);
+                logger.debug('GROQ', extractedText);
+                return extractedText;
+            } catch (err: any) {
+                if (isModelUnavailableError(err) && attempt < maxModelAttempts - 1) {
+                    logger.warn(
+                        'GROQ',
+                        `Model '${modelName}' is unavailable or decommissioned (${err?.status || err?.code}). Initiating automatic model rotation...`
+                    );
+                    excludedModels.push(modelName);
+                    modelName = await getOrResolveVisionModel(client, true, excludedModels);
+                    logger.info('GROQ', `Rotated to model '${modelName}'. Retrying image transcription...`);
+                    continue;
+                }
+                throw err;
+            }
         }
 
-        logger.info('GROQ', `Text successfully extracted via Groq Vision (${extractedText.length} chars)`);
-        logger.debug('GROQ', extractedText);
-        return extractedText;
+        return '';
 
     } catch (error) {
         logger.error('GROQ', 'Error extracting text with Groq Vision:', error);
