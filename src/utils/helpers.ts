@@ -11,27 +11,63 @@ import {
 } from './config.data';
 
 /**
- * Transforms a date string from "DD/MM/YYYY" format into the business-standard "D-Mes-YYYY" format.
+ * Converts an Excel / Google Sheets serial date number (days since 1899-12-30)
+ * into the canonical business date string format "D-Mes-YYYY".
+ * 
+ * @example
+ * excelSerialToDate(46280) // => "15-Sep-2026"
+ * excelSerialToDate("46235") // => "1-Ago-2026"
+ * 
+ * @param serial - Number or numeric string representing the Excel serial date.
+ * @returns Formatted date string, or original string if invalid.
+ */
+export const excelSerialToDate = (serial: number | string): string => {
+    const num = typeof serial === 'number' ? serial : parseFloat(String(serial));
+    if (isNaN(num) || num < 1) return String(serial);
+
+    const months = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+    // Excel epoch begins 1899-12-30 UTC to account for the 1900 leap year quirk
+    const excelEpochMs = Date.UTC(1899, 11, 30);
+    const dateMs = excelEpochMs + Math.floor(num) * 86400000;
+    const date = new Date(dateMs);
+
+    const day = date.getUTCDate();
+    const month = months[date.getUTCMonth()];
+    const year = date.getUTCFullYear();
+    return `${day}-${month}-${year}`;
+};
+
+/**
+ * Transforms a date string from "DD/MM/YYYY" or Excel serial format into the business-standard "D-Mes-YYYY" format.
  * 
  * @example
  * formatDate("01/05/2026") // => "1-May-2026"
  * formatDate("15/12/2025") // => "15-Dic-2025"
+ * formatDate("46280")      // => "15-Sep-2026"
  * 
- * @param originalDate - Date string in DD/MM/YYYY format.
+ * @param originalDate - Date string in DD/MM/YYYY or numeric serial format.
  * @returns Formatted date string, or original string if pattern does not match.
  */
 export const formatDate = (originalDate: string): string => {
-    const months = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
-    const parts = originalDate.split('/');
+    if (!originalDate) return '';
+    const trimmed = originalDate.trim();
 
-  if (parts.length === 3) {
-    const day = parseInt(parts[0] || '1', 10);
-    const monthIndex = parseInt(parts[1] || '1', 10) - 1;
-    const month = months[monthIndex];
-    const year = parts[2];
-    return `${day}-${month}-${year}`;
-  }
-  return originalDate;
+    // Handle 5-digit Excel serial date numbers (e.g. 46280)
+    if (/^\d{5}(\.\d+)?$/.test(trimmed)) {
+        return excelSerialToDate(trimmed);
+    }
+
+    const months = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+    const parts = trimmed.split('/');
+
+    if (parts.length === 3) {
+        const day = parseInt(parts[0] || '1', 10);
+        const monthIndex = parseInt(parts[1] || '1', 10) - 1;
+        const month = months[monthIndex];
+        const year = parts[2];
+        return `${day}-${month}-${year}`;
+    }
+    return trimmed;
 };
 
 /**

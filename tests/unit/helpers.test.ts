@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import sharp from 'sharp';
 import {
     formatDate,
+    excelSerialToDate,
     formatAccountNumber,
     executeWithRetry,
     normalizeText,
@@ -23,9 +24,32 @@ describe('helpers.ts', () => {
             expect(formatDate('31/12/2025')).toBe('31-Dic-2025');
         });
 
+        it('converts Excel serial dates into canonical D-Mes-YYYY format', () => {
+            expect(formatDate('46280')).toBe('15-Sep-2026');
+            expect(formatDate('46235')).toBe('1-Ago-2026');
+            expect(formatDate('46280.5')).toBe('15-Sep-2026');
+        });
+
+        it('returns empty string for empty input', () => {
+            expect(formatDate('')).toBe('');
+        });
+
         it('returns original input if date format does not match DD/MM/YYYY', () => {
             expect(formatDate('2026-01-01')).toBe('2026-01-01');
             expect(formatDate('invalid-date')).toBe('invalid-date');
+        });
+    });
+
+    describe('excelSerialToDate', () => {
+        it('converts numeric and string serial numbers accurately', () => {
+            expect(excelSerialToDate(46280)).toBe('15-Sep-2026');
+            expect(excelSerialToDate('46280')).toBe('15-Sep-2026');
+            expect(excelSerialToDate(46235)).toBe('1-Ago-2026');
+        });
+
+        it('returns original input when invalid', () => {
+            expect(excelSerialToDate('not-a-number')).toBe('not-a-number');
+            expect(excelSerialToDate(-1)).toBe('-1');
         });
     });
 

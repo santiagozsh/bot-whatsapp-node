@@ -9,6 +9,8 @@ import {
     readSalesRows,
     getIncomeSheetName,
     getSalesSheetName,
+    formatDateCell,
+    getSheetIdByName,
     _setSheetsClientForTesting,
     _resetSheetsClientForTesting,
 } from '../../src/services/sheets.service';
@@ -24,6 +26,15 @@ describe('sheets.service.ts (Google Sheets API Layer)', () => {
 
         mockSheetsClient = {
             spreadsheets: {
+                get: vi.fn().mockResolvedValue({
+                    data: {
+                        sheets: [
+                            { properties: { title: 'Ingresos transacciones', sheetId: 1136341052 } },
+                            { properties: { title: 'Ventas', sheetId: 143576416 } },
+                        ],
+                    },
+                }),
+                batchUpdate: vi.fn().mockResolvedValue({ data: {} }),
                 values: {
                     append: vi.fn(),
                     get: vi.fn(),
@@ -74,6 +85,35 @@ describe('sheets.service.ts (Google Sheets API Layer)', () => {
             expect(rowValues[1]).toBe('5-Ago-2026'); // Formatted date
             expect(rowValues[7]).toBe('314 352 7475'); // Formatted account
             expect(rowValues[8]).toBe('Karol');
+
+            // Verifies date cell formatting was applied to column B of row 15
+            expect(mockSheetsClient.spreadsheets.batchUpdate).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    requestBody: expect.objectContaining({
+                        requests: [
+                            expect.objectContaining({
+                                repeatCell: expect.objectContaining({
+                                    range: {
+                                        sheetId: 1136341052,
+                                        startRowIndex: 14,
+                                        endRowIndex: 15,
+                                        startColumnIndex: 1,
+                                        endColumnIndex: 2,
+                                    },
+                                    cell: {
+                                        userEnteredFormat: {
+                                            numberFormat: {
+                                                type: 'DATE',
+                                                pattern: 'd-mmm-yyyy',
+                                            },
+                                        },
+                                    },
+                                }),
+                            }),
+                        ],
+                    }),
+                })
+            );
         });
     });
 
@@ -212,7 +252,23 @@ describe('sheets.service.ts (Google Sheets API Layer)', () => {
             expect(rows).toHaveLength(1);
             expect(rows[0]?.fila).toBe(2);
             expect(rows[0]?.nPedido).toBe('LG-001');
+            expect(rows[0]?.fecha).toBe('1-Ene-2026');
             expect(rows[0]?.vendedor).toBe('Karol');
+        });
+
+        it('normalizes Excel serial dates into canonical D-Mes-YYYY string when reading', async () => {
+            mockSheetsClient.spreadsheets.values.get.mockResolvedValue({
+                data: {
+                    values: [
+                        ['N.Pedido', 'Fecha', 'Tipo', 'Desc', 'Precio', 'Medio', 'Ref', 'Cuenta', 'Vendedor'],
+                        ['LG-062', '46280', 'Abono', 'Pedido al por menor', '65000', 'Nequi', 'M144', '310 613 1751', 'JHON'],
+                    ],
+                },
+            });
+
+            const rows = await readIncomeRows();
+            expect(rows).toHaveLength(1);
+            expect(rows[0]?.fecha).toBe('15-Sep-2026');
         });
 
         it('reads and maps sales rows, parsing watch and accessory quantities', async () => {
@@ -285,6 +341,61 @@ describe('sheets.service.ts (Google Sheets API Layer)', () => {
             expect(mockSheetsClient.spreadsheets.values.append).toHaveBeenCalledTimes(1);
             const call = mockSheetsClient.spreadsheets.values.append.mock.calls[0][0];
             expect(call.range).toBe('Custom Incomes!A:I');
+        });
+    });
+
+    describe('formatDateCell & getSheetIdByName', () => {
+        it('resolves sheetId by title and caches the result', async () => {
+            const sheetId = await getSheetIdByName('Ingresos transacciones');
+            expect(sheetId).toBe(1136341052);
+            expect(mockSheetsClient.spreadsheets.get).toHaveBeenCalledTimes(1);
+
+            // Second call should hit the cache
+            const cachedId = await getSheetIdByName('Ingresos transacciones');
+            expect(cachedId).toBe(1136341052);
+            expect(mockSheetsClient.spreadsheets.get).toHaveBeenCalledTimes(1);
+        });
+
+        it('returns null if sheet name is not found', async () => {
+            const missingId = await getSheetIdByName('NonExistentSheet');
+            expect(missingId).toBeNull();
+        });
+
+        it('applies repeatCell with DATE numberFormat to specified column and row', async () => {
+            await formatDateCell('Ingresos transacciones', 22, 1);
+
+            expect(mockSheetsClient.spreadsheets.batchUpdate).toHaveBeenCalledWith({
+                spreadsheetId: expect.any(String),
+                requestBody: {
+                    requests: [
+                        {
+                            repeatCell: {
+                                range: {
+                                    sheetId: 1136341052,
+                                    startRowIndex: 21,
+                                    endRowIndex: 22,
+                                    startColumnIndex: 1,
+                                    endColumnIndex: 2,
+                                },
+                                cell: {
+                                    userEnteredFormat: {
+                                        numberFormat: {
+                                            type: 'DATE',
+                                            pattern: 'd-mmm-yyyy',
+                                        },
+                                    },
+                                },
+                                fields: 'userEnteredFormat.numberFormat',
+                            },
+                        },
+                    ],
+                },
+            });
+        });
+
+        it('ignores invalid row indices gracefully', async () => {
+            await formatDateCell('Ingresos transacciones', 0, 1);
+            expect(mockSheetsClient.spreadsheets.batchUpdate).not.toHaveBeenCalled();
         });
     });
 });
