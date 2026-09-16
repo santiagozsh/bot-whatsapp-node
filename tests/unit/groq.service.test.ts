@@ -56,6 +56,7 @@ describe('groq.service.ts (Groq LPU Multimodal Vision Engine)', () => {
 
         expect(result).toBe('Nequi $670.000 Para: Jhon Aguirre Ref: M07838801');
         expect(mockCreate).toHaveBeenCalledTimes(1);
+        expect(mockCreate.mock.calls[0][0].max_completion_tokens).toBe(512);
     });
 
     it('handles API errors gracefully and returns empty string without throwing', async () => {

@@ -229,7 +229,7 @@ export async function extractTextWithGroqVision(
                             },
                         ],
                         temperature: 0.1,
-                        max_completion_tokens: 1024,
+                        max_completion_tokens: 512,
                     });
                 }, 4, 4000); // 4 attempts with 4s backoff on 429
 
