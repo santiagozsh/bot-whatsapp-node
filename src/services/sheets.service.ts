@@ -63,11 +63,103 @@ export function _setSheetsClientForTesting(client: any): void {
     sheetsClientPromise = Promise.resolve(client);
 }
 
+const sheetIdCache = new Map<string, number>();
+
+/**
+ * Resolves the numeric sheetId of a worksheet tab by its title.
+ */
+export const getSheetIdByName = async (sheetName: string): Promise<number | null> => {
+    if (sheetIdCache.has(sheetName)) {
+        return sheetIdCache.get(sheetName)!;
+    }
+    try {
+        const sheets = await getSheetsClient();
+        if (sheets.spreadsheets?.get) {
+            const spreadsheet = await sheets.spreadsheets.get({
+                spreadsheetId: SPREADSHEET_ID,
+                fields: 'sheets.properties',
+            });
+            for (const sheet of spreadsheet.data?.sheets || []) {
+                if (sheet.properties?.title === sheetName && typeof sheet.properties.sheetId === 'number') {
+                    sheetIdCache.set(sheetName, sheet.properties.sheetId);
+                    return sheet.properties.sheetId;
+                }
+            }
+        }
+    } catch (error) {
+        logger.warn('SHEETS', `Failed to fetch sheet metadata for "${sheetName}":`, error);
+    }
+    return null;
+};
+
+/**
+ * Resets the cached sheet IDs (used in unit tests).
+ */
+export const _resetSheetIdCacheForTesting = (): void => {
+    sheetIdCache.clear();
+};
+
+/**
+ * Applies the canonical date format (`d-mmm-yyyy`) to a specific cell in Google Sheets.
+ * Used when appending rows to ensure newly inserted rows display as dates and not serial numbers.
+ * 
+ * @param sheetName - Tab title (e.g. 'Ingresos transacciones' or 'Ventas')
+ * @param rowIndex - 1-based row index in the sheet
+ * @param columnIndex - 0-based column index (defaults to 1 for Column B)
+ */
+export const formatDateCell = async (
+    sheetName: string,
+    rowIndex: number,
+    columnIndex: number = 1
+): Promise<void> => {
+    if (rowIndex < 1) return;
+    try {
+        const sheetId = await getSheetIdByName(sheetName);
+        if (sheetId === null) {
+            return;
+        }
+        const sheets = await getSheetsClient();
+        if (sheets.spreadsheets?.batchUpdate) {
+            await sheets.spreadsheets.batchUpdate({
+                spreadsheetId: SPREADSHEET_ID,
+                requestBody: {
+                    requests: [
+                        {
+                            repeatCell: {
+                                range: {
+                                    sheetId,
+                                    startRowIndex: rowIndex - 1,
+                                    endRowIndex: rowIndex,
+                                    startColumnIndex: columnIndex,
+                                    endColumnIndex: columnIndex + 1,
+                                },
+                                cell: {
+                                    userEnteredFormat: {
+                                        numberFormat: {
+                                            type: 'DATE',
+                                            pattern: 'd-mmm-yyyy',
+                                        },
+                                    },
+                                },
+                                fields: 'userEnteredFormat.numberFormat',
+                            },
+                        },
+                    ],
+                },
+            });
+            logger.info('SHEETS', `Applied DATE format (d-mmm-yyyy) to ${sheetName} row ${rowIndex}`);
+        }
+    } catch (error) {
+        logger.warn('SHEETS', `Failed to apply DATE format to ${sheetName} row ${rowIndex}:`, error);
+    }
+};
+
 /**
  * Resets the cached Google Sheets client singleton.
  */
 export function _resetSheetsClientForTesting(): void {
     sheetsClientPromise = null;
+    _resetSheetIdCacheForTesting();
 }
 
 const extractRowNumber = (updatedRange: string | undefined | null): number => {
@@ -128,6 +220,10 @@ export const appendIncomeRow = async (
 
             const updatedRange: string | undefined | null = appendResponse.data.updates?.updatedRange;
             const incomeRowIndex = extractRowNumber(updatedRange);
+
+            if (incomeRowIndex > 0) {
+                await formatDateCell(incomeSheetName, incomeRowIndex, 1);
+            }
 
             logger.info('SHEETS', `Income row created: ${newOrderId} (row ${incomeRowIndex})`);
             recordSheetsOperation('append_income', 'success');
@@ -199,6 +295,10 @@ export const appendSalesRow = async (
 
             const updatedRange: string | undefined | null = appendResponse.data.updates?.updatedRange;
             const salesRowIndex = extractRowNumber(updatedRange);
+
+            if (salesRowIndex > 0) {
+                await formatDateCell(salesSheetName, salesRowIndex, 1);
+            }
 
             logger.info('SHEETS', `Sales row ${salesRowIndex} created for ${orderNumber}`);
             recordSheetsOperation('append_sales', 'success');
@@ -426,7 +526,7 @@ export const readIncomeRows = async (): Promise<IncomeRow[]> => {
             return rows.slice(1).map((row: string[], index: number) => ({
                 fila: index + 2,
                 nPedido: row[0] || '',
-                fecha: row[1] || '',
+                fecha: formatDate(row[1] || ''),
                 tipo: row[2] || '',
                 descripcion: row[3] || '',
                 precioCompra: row[4] || '',
