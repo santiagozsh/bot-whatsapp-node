@@ -18,6 +18,7 @@ services:
       - "9090:9090"
     environment:
       NODE_ENV: development
+      TZ: America/Bogota
       AUTH_FOLDER_PATH: /app/auth_info_dev
       DB_PATH: /app/bot_memory.db
       OPENAI_API_KEY: ${OPENAI_API_KEY}
@@ -44,6 +45,7 @@ services:
       - /app/node_modules
     environment:
       NODE_ENV: test
+      TZ: America/Bogota
 
   alloy:
     container_name: grafana-alloy

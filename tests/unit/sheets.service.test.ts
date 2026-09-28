@@ -5,6 +5,7 @@ import {
     enrichSalesRow,
     updateIncomeRow,
     getLatestOrderNumberFromSheets,
+    findRowIndexByOrderNumber,
     readIncomeRows,
     readSalesRows,
     getIncomeSheetName,
@@ -227,6 +228,22 @@ describe('sheets.service.ts (Google Sheets API Layer)', () => {
             expect(result).toBe(45);
         });
 
+        it('finds the maximum LG-XXX numeric ID even when rows are out of order or reverse-sorted', async () => {
+            mockSheetsClient.spreadsheets.values.get.mockResolvedValue({
+                data: {
+                    values: [
+                        ['N.Pedido'],
+                        ['LG-090'],
+                        ['LG-105'], // Highest in the middle
+                        ['LG-012'], // Old order at the bottom due to sorting
+                    ],
+                },
+            });
+
+            const result = await getLatestOrderNumberFromSheets();
+            expect(result).toBe(105);
+        });
+
         it('returns null if no valid LG order numbers exist in column A', async () => {
             mockSheetsClient.spreadsheets.values.get.mockResolvedValue({
                 data: { values: [['Header only'], ['Invalid']] },
@@ -234,6 +251,33 @@ describe('sheets.service.ts (Google Sheets API Layer)', () => {
 
             const result = await getLatestOrderNumberFromSheets();
             expect(result).toBeNull();
+        });
+    });
+
+    describe('findRowIndexByOrderNumber', () => {
+        it('finds 1-based row index for an order identifier', async () => {
+            mockSheetsClient.spreadsheets.values.get.mockResolvedValue({
+                data: {
+                    values: [
+                        ['N.Pedido'],
+                        ['LG-001'],
+                        ['LG-050'],
+                        ['LG-045'],
+                    ],
+                },
+            });
+
+            const rowIndex = await findRowIndexByOrderNumber('Ingresos transacciones', 'LG-050');
+            expect(rowIndex).toBe(3);
+        });
+
+        it('returns null if order number is not found', async () => {
+            mockSheetsClient.spreadsheets.values.get.mockResolvedValue({
+                data: { values: [['LG-001']] },
+            });
+
+            const rowIndex = await findRowIndexByOrderNumber('Ingresos transacciones', 'LG-999');
+            expect(rowIndex).toBeNull();
         });
     });
 

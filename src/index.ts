@@ -4,6 +4,7 @@ import { getLatestOrderNumberFromSheets } from './services/sheets.service';
 import { classifyDailyOrders } from './services/classifier.service';
 import { startMetricsServer, stopMetricsServer } from './services/metrics.service';
 import { logger } from './utils/logger';
+import { getMsUntilBogotaMidnight } from './utils/helpers';
 
 /**
  * Main application bootstrap sequence:
@@ -37,14 +38,8 @@ async function startServer(): Promise<void> {
 
 startServer();
 
-// Calculate milliseconds until midnight for daily wholesale classifier cron
-const msUntilMidnight = (() => {
-    const now = new Date();
-    const midnight = new Date(now);
-    midnight.setDate(now.getDate() + 1);
-    midnight.setHours(0, 0, 0, 0);
-    return midnight.getTime() - now.getTime();
-})();
+// Calculate milliseconds until Colombian midnight for daily wholesale classifier cron
+const msUntilMidnight = getMsUntilBogotaMidnight();
 
 setTimeout(() => {
     classifyDailyOrders();

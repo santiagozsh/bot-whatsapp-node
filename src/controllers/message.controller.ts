@@ -2,7 +2,7 @@ import { extractAccountingDataFromOcr, extractCustomerDataFromText, optimizeImag
 import { appendIncomeRow, appendSalesRow, enrichSalesRow, updateIncomeRow } from '../services/sheets.service';
 import { saveTransaction, updateSalesRowIndex, findTransactionByMessageId, findTransactionByPaymentReference, findTransactionByOrderNumber } from '../services/memory.service';
 import { extractTextWithVisionEnhanced } from '../services/vision.service';
-import { formatDate, normalizeOcrText, isUsefulText, detectBankByColor, parseCodCollectionMessage, isCodClarification, normalizeVendor, WHOLESALE_QUANTITY_THRESHOLD, type CodCollectionData } from '../utils/helpers';
+import { formatDate, normalizeOcrText, isUsefulText, detectBankByColor, parseCodCollectionMessage, isCodClarification, normalizeVendor, WHOLESALE_QUANTITY_THRESHOLD, getBogotaTodayDateString, type CodCollectionData } from '../utils/helpers';
 import { logger } from '../utils/logger';
 import { recordMessageProcessed } from '../services/metrics.service';
 import type { IncomeData, CustomerData } from '../types';
@@ -144,8 +144,7 @@ function containsFinancialKeywords(text: string): boolean {
 }
 
 function getTodayFormattedString(): string {
-    const d = new Date();
-    return `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getFullYear()}`;
+    return getBogotaTodayDateString();
 }
 
 // ── Transaction Lifecycle: Closing & Persisting Sales ────────

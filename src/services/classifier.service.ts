@@ -1,20 +1,15 @@
 import { readIncomeRows, readSalesRows, updateIncomeRow } from './sheets.service';
 import { logger } from '../utils/logger';
-import { classifyOrderDescription, WHOLESALE_QUANTITY_THRESHOLD, WHOLESALE_PRICE_THRESHOLD } from '../utils/helpers';
+import { classifyOrderDescription, WHOLESALE_QUANTITY_THRESHOLD, WHOLESALE_PRICE_THRESHOLD, getBogotaFormattedDate } from '../utils/helpers';
 import type { IncomeRow, SalesRow } from './sheets.service';
 
-const SPANISH_MONTHS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-
 /**
- * Returns a date string formatted as "D-Mes-YYYY" matching the Google Sheets date schema.
+ * Returns a date string formatted as "D-Mes-YYYY" matching the Google Sheets date schema in America/Bogota timezone.
  * 
  * @param date - Optional date instance (defaults to current system time).
  */
 export const getFormattedTodayDate = (date: Date = new Date()): string => {
-    const day = date.getDate();
-    const month = SPANISH_MONTHS[date.getMonth()];
-    const year = date.getFullYear();
-    return `${day}-${month}-${year}`;
+    return getBogotaFormattedDate(date);
 };
 
 // Backward-compatible alias

@@ -465,7 +465,8 @@ export interface SalesRow {
 export type FilaVenta = SalesRow;
 
 /**
- * Scans Column A of `Ingresos transacciones` from bottom up to discover the latest numerical order ID (`LG-XXX`).
+ * Scans Column A of `Ingresos transacciones` to discover the maximum numerical order ID (`LG-XXX`).
+ * Uses Math.max across all matched IDs to remain strictly resilient against manual sheet sorting or filtering.
  * Used at startup to synchronize SQLite's sequence counter with Google Sheets.
  * 
  * @returns Highest numerical order ID found, or null if empty.
@@ -483,16 +484,20 @@ export const getLatestOrderNumberFromSheets = async (): Promise<number | null> =
             });
 
             const rows = response.data.values || [];
-            for (let i = rows.length - 1; i >= 0; i--) {
-                const value = rows[i]?.[0];
+            let maxOrderNumber = 0;
+            for (const row of rows) {
+                const value = row?.[0];
                 if (value) {
                     const match = String(value).match(/LG-(\d+)/);
                     if (match && match[1]) {
-                        return parseInt(match[1], 10);
+                        const num = parseInt(match[1], 10);
+                        if (num > maxOrderNumber) {
+                            maxOrderNumber = num;
+                        }
                     }
                 }
             }
-            return null;
+            return maxOrderNumber > 0 ? maxOrderNumber : null;
         });
     } catch (error) {
         logger.error('SHEETS', 'Error getting latest order number from Sheets:', error);
@@ -502,6 +507,39 @@ export const getLatestOrderNumberFromSheets = async (): Promise<number | null> =
 
 // Backward-compatible alias
 export const obtenerUltimoNPedido = getLatestOrderNumberFromSheets;
+
+/**
+ * Locates the 1-based row index of an order in the given sheet by its order ID (e.g. `LG-042`).
+ * Scans Column A for a matching `orderNumber`.
+ * 
+ * @param sheetName - Worksheet title (e.g. 'Ingresos transacciones' or 'Ventas')
+ * @param orderNumber - Sequential order number string (`LG-XXX`)
+ * @returns 1-based row index, or null if not found
+ */
+export const findRowIndexByOrderNumber = async (
+    sheetName: string,
+    orderNumber: string
+): Promise<number | null> => {
+    try {
+        return await executeWithRetry(async () => {
+            const sheets = await getSheetsClient();
+            const response = await sheets.spreadsheets.values.get({
+                spreadsheetId: SPREADSHEET_ID,
+                range: `${sheetName}!A:A`,
+            });
+            const rows = response.data.values || [];
+            for (let i = 0; i < rows.length; i++) {
+                if (rows[i]?.[0]?.trim() === orderNumber.trim()) {
+                    return i + 1;
+                }
+            }
+            return null;
+        });
+    } catch (error) {
+        logger.error('SHEETS', `Error searching row for order ${orderNumber} in ${sheetName}:`, error);
+        return null;
+    }
+};
 
 /**
  * Reads all transaction records from `Ingresos transacciones!A:I`, skipping the header row.

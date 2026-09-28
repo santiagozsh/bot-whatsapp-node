@@ -3,8 +3,10 @@ FROM node:22-alpine AS dev
 WORKDIR /app
 
 # Install runtime and temporary build dependencies for native modules (better-sqlite3, sharp)
-RUN apk add --no-cache libstdc++ && \
+RUN apk add --no-cache libstdc++ tzdata && \
     apk add --no-cache --virtual .build-deps python3 make g++
+
+ENV TZ=America/Bogota
 
 # Optimize layer caching: install dependencies and purge temporary build dependencies and npm cache
 COPY package*.json tsconfig.json vitest.config.* ./
@@ -22,7 +24,8 @@ FROM node:22-alpine AS builder
 
 WORKDIR /app
 
-RUN apk add --no-cache python3 make g++
+RUN apk add --no-cache python3 make g++ tzdata
+ENV TZ=America/Bogota
 
 COPY package*.json tsconfig.json vitest.config.* ./
 RUN npm ci
@@ -38,7 +41,9 @@ FROM node:22-alpine AS runner
 
 WORKDIR /app
 
-RUN apk add --no-cache python3 make g++
+RUN apk add --no-cache python3 make g++ tzdata && \
+    apk add --no-cache libstdc++
+ENV TZ=America/Bogota
 
 COPY package*.json ./
 RUN npm ci --omit=dev && apk del python3 make g++

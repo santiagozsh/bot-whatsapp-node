@@ -11,6 +11,7 @@ services:
       - "9090:9090"
     environment:
       NODE_ENV: production
+      TZ: America/Bogota
       AUTH_FOLDER_PATH: /app/auth_info
       DB_PATH: /app/bot_memory.db
       OPENAI_API_KEY: ${OPENAI_API_KEY}

@@ -71,6 +71,70 @@ export const formatDate = (originalDate: string): string => {
 };
 
 /**
+ * Returns today's date in Colombia (America/Bogota, UTC-5) formatted as "DD/MM/YYYY".
+ * Used for inserting cash-on-delivery transactions and sales records.
+ *
+ * @param date - Optional date instance (defaults to current time).
+ * @returns Date string in "DD/MM/YYYY" format.
+ */
+export const getBogotaTodayDateString = (date: Date = new Date()): string => {
+    const formatter = new Intl.DateTimeFormat('es-CO', {
+        timeZone: 'America/Bogota',
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+    });
+    const parts = formatter.formatToParts(date);
+    const day = parts.find(p => p.type === 'day')?.value.padStart(2, '0') || '01';
+    const month = parts.find(p => p.type === 'month')?.value.padStart(2, '0') || '01';
+    const year = parts.find(p => p.type === 'year')?.value || '2026';
+    return `${day}/${month}/${year}`;
+};
+
+/**
+ * Returns today's date in Colombia (America/Bogota, UTC-5) formatted as canonical "D-Mes-YYYY".
+ * Used for matching the Google Sheets date schema in the daily order classifier.
+ *
+ * @param date - Optional date instance (defaults to current time).
+ * @returns Date string in "D-Mes-YYYY" format (e.g. "27-Sep-2026").
+ */
+export const getBogotaFormattedDate = (date: Date = new Date()): string => {
+    const months = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+    const formatter = new Intl.DateTimeFormat('es-CO', {
+        timeZone: 'America/Bogota',
+        day: 'numeric',
+        month: 'numeric',
+        year: 'numeric',
+    });
+    const parts = formatter.formatToParts(date);
+    const day = parts.find(p => p.type === 'day')?.value || '1';
+    const monthIndex = parseInt(parts.find(p => p.type === 'month')?.value || '1', 10) - 1;
+    const year = parts.find(p => p.type === 'year')?.value || '2026';
+    return `${day}-${months[monthIndex]}-${year}`;
+};
+
+/**
+ * Calculates milliseconds remaining until midnight in Colombia (America/Bogota, UTC-5).
+ * Used for scheduling the daily wholesale classifier cron at local Colombian midnight.
+ * 
+ * @param now - Optional date instance (defaults to current time).
+ * @returns Milliseconds until the next Colombian midnight (00:00:00 COT).
+ */
+export const getMsUntilBogotaMidnight = (now: Date = new Date()): number => {
+    const formatter = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Bogota',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+    });
+    const [year, month, day] = formatter.format(now).split('-').map(Number);
+    // In America/Bogota (UTC-5), midnight 00:00:00 is 05:00:00 UTC.
+    const nextMidnightUtcMs = Date.UTC(year!, month! - 1, day! + 1, 5, 0, 0, 0);
+    return Math.max(0, nextMidnightUtcMs - now.getTime());
+};
+
+
+/**
  * Formats a 10-digit Colombian phone or bank account number into spaced segments: "XXX XXX XXXX".
  * 
  * @example
